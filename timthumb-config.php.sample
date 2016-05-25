@@ -30,6 +30,7 @@ define ('FILE_CACHE_SUFFIX', '.cache.txt');             // What to put at the en
 define ('FILE_CACHE_PREFIX', 'tt');                  // What to put at the beg of all files in the cache directory so we can identify them
 define ('FILE_CACHE_DIRECTORY', './cache');          // Directory where images are cached.
                                                      // Left blank it will use the system temporary directory (which is better for security)
+define ('MAX_FILE_SIZE', 10485760);                  // 10 MB is 10485760. This is the max internal or external file size that we'll process.
 define ('WAIT_BETWEEN_FETCH_ERRORS', 3600);          // Time to wait between errors fetching remote file
 
 // Browser caching
