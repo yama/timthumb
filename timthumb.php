@@ -221,7 +221,7 @@ class timthumb {
             $this->error("No image specified");
             return false;
         }
-        if(BLOCK_EXTERNAL_LEECHERS && array_key_exists('HTTP_REFERER', $_SERVER) && (! preg_match('/^https?:\/\/(?:www\.)?' . $this->myHost . '(?:$|\/)/i', $_SERVER['HTTP_REFERER']))){
+        if(BLOCK_EXTERNAL_LEECHERS && isset($_SERVER['HTTP_REFERER']) && (! preg_match('@^https?://(?:www\.)?' . $this->myHost . '(?:$|/)@i', $_SERVER['HTTP_REFERER']))){
             // base64 encoded red image that says 'no hotlinkers'
             // nothing to worry about! :)
             $imgData = base64_decode("R0lGODlhUAAMAIAAAP8AAP///yH5BAAHAP8ALAAAAABQAAwAAAJpjI+py+0Po5y0OgAMjjv01YUZ\nOGplhWXfNa6JCLnWkXplrcBmW+spbwvaVr/cDyg7IoFC2KbYVC2NQ5MQ4ZNao9Ynzjl9ScNYpneb\nDULB3RP6JuPuaGfuuV4fumf8PuvqFyhYtjdoeFgAADs=");
