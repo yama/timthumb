@@ -360,6 +360,8 @@ class timthumb {
     }
     protected function processImageAndWriteToCache($localImage){
         $sData = getimagesize($localImage);
+        $origWidth  = $sData[0];
+        $origHeight = $sData[1];
         $origType = $sData[2];
         $mimeType = $sData['mime'];
 
@@ -406,8 +408,8 @@ class timthumb {
         }
 
         // ensure size limits can not be abused
-        $new_width = min ($new_width, MAX_WIDTH);
-        $new_height = min ($new_height, MAX_HEIGHT);
+        $new_width  = min ($origWidth, $new_width, MAX_WIDTH);
+        $new_height = min ($origHeight, $new_height, MAX_HEIGHT);
 
         // set memory limit to be able to have enough space to resize larger images
         $this->setMemoryLimit();
