@@ -463,7 +463,7 @@ class timthumb {
         // Create a new transparent color for image
         // If is a png and PNG_IS_TRANSPARENT is false then remove the alpha transparency 
         // (and if is set a canvas color show it in the background)
-        if(preg_match('/^image\/png$/i', $mimeType) && !PNG_IS_TRANSPARENT && $canvas_trans){ 
+        if(preg_match('@^image/png$@i', $mimeType) && !PNG_IS_TRANSPARENT && $canvas_trans){ 
             $color = imagecolorallocatealpha ($canvas, $canvas_color_R, $canvas_color_G, $canvas_color_B, 127);        
         }else{
             $color = imagecolorallocatealpha ($canvas, $canvas_color_R, $canvas_color_G, $canvas_color_B, 0);
@@ -614,13 +614,13 @@ class timthumb {
 
         $imgType = "";
         $tempfile = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
-        if(preg_match('/^image\/(?:jpg|jpeg)$/i', $mimeType)){ 
+        if(preg_match('@^image/(?:jpg|jpeg)$@i', $mimeType)){ 
             $imgType = 'jpg';
             imagejpeg($canvas, $tempfile, $quality); 
-        } else if(preg_match('/^image\/png$/i', $mimeType)){ 
+        } else if(preg_match('@^image/png$@i', $mimeType)){ 
             $imgType = 'png';
             imagepng($canvas, $tempfile, floor($quality * 0.09));
-        } else if(preg_match('/^image\/gif$/i', $mimeType)){
+        } else if(preg_match('@^image/gif$@i', $mimeType)){
             $imgType = 'gif';
             imagegif($canvas, $tempfile);
         } else {
@@ -725,7 +725,7 @@ class timthumb {
         if(! $this->docRoot){
             $this->debug(3, "We have no document root set, so as a last resort, lets check if the image is in the current dir and serve that.");
             //We don't support serving images outside the current dir if we don't have a doc root for security reasons.
-            $file = preg_replace('/^.*?([^\/\\\\]+)$/', '$1', $src); //strip off any path info and just leave the filename.
+            $file = preg_replace('@^.*?([^/\\\\]+)$@', '$1', $src); //strip off any path info and just leave the filename.
             if(is_file($file)){
                 return $this->realpath($file);
             }
@@ -787,7 +787,7 @@ class timthumb {
     }
     protected function realpath($path){
         //try to remove any relative paths
-        $remove_relatives = '/\w+\/\.\.\//';
+        $remove_relatives = '@\w+/\.\./@';
         while(preg_match($remove_relatives,$path)){
             $path = preg_replace($remove_relatives, '', $path);
         }
@@ -822,10 +822,10 @@ class timthumb {
         $proxy = WEBSHOT_PROXY ? ' --http-proxy=' . WEBSHOT_PROXY : '';
         $tempfile = tempnam($this->cacheDirectory, 'timthumb_webshot');
         $url = $this->src;
-        if(! preg_match('/^https?:\/\/[a-zA-Z0-9\.\-]+/i', $url)){
+        if(! preg_match('@^https?://[a-zA-Z0-9\.\-]+@i', $url)){
             return $this->error("Invalid URL supplied.");
         }
-        $url = preg_replace('/[^A-Za-z0-9\-\.\_:\/\?\&\+\;\=]+/', '', $url); //RFC 3986 plus ()$ chars to prevent exploit below. Plus the following are also removed: @*!~#[]',
+        $url = preg_replace('@[^A-Za-z0-9\-\.\_:/\?\&\+\;\=]+@', '', $url); //RFC 3986 plus ()$ chars to prevent exploit below. Plus the following are also removed: @*!~#[]',
         // 2014 update by Mark Maunder: This exploit: http://cxsecurity.com/issue/WLB-2014060134
         // uses the $(command) shell execution syntax to execute arbitrary shell commands as the web server user. 
         // So we're now filtering out the characters: '$', '(' and ')' in the above regex to avoid this. 
@@ -853,7 +853,7 @@ class timthumb {
         }
     }
     protected function serveExternalImage(){
-        if(! preg_match('/^https?:\/\/[a-zA-Z0-9\-\.]+/i', $this->src)){
+        if(! preg_match('@^https?://[a-zA-Z0-9\-\.]+@i', $this->src)){
             $this->error("Invalid URL supplied.");
             return false;
         }
@@ -870,7 +870,7 @@ class timthumb {
         }
 
         $mimeType = $this->getMimeType($tempfile);
-        if(! preg_match("/^image\/(?:jpg|jpeg|gif|png)$/i", $mimeType)){
+        if(! preg_match("@^image/(?:jpg|jpeg|gif|png)$@i", $mimeType)){
             $this->debug(3, "Remote file has invalid mime type: $mimeType");
             @unlink($this->cachefile);
             touch($this->cachefile);
@@ -927,7 +927,7 @@ class timthumb {
         }
     }
     protected function sendImageHeaders($mimeType, $dataSize){
-        if(! preg_match('/^image\//i', $mimeType)){
+        if(! preg_match('@^image/@i', $mimeType)){
             $mimeType = 'image/' . $mimeType;
         }
         if(strtolower($mimeType) == 'image/jpg'){
