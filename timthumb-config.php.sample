@@ -7,59 +7,58 @@
  * everytime you download a new version
 */
 
-define ('DEBUG_ON', false);                       // Enable debug logging to web server error log (STDERR)
-define ('DEBUG_LEVEL', 1);                        // Debug level 1 is less noisy and 3 is the most noisy
-define ('DISPLAY_ERROR_MESSAGES', true);          // Display error messages. Set to false to turn off errors (good for production websites)
+CONF::$DEBUG_ON = false;                       // Enable debug logging to web server error log (STDERR)
+CONF::$DEBUG_LEVEL = 1;                        // Debug level 1 is less noisy and 3 is the most noisy
+CONF::$DISPLAY_ERROR_MESSAGES = true;          // Display error messages. Set to false to turn off errors (good for production websites)
 
-// define ('LOCAL_FILE_BASE_DIRECTORY', '/web/public_html'); Override the DOCUMENT_ROOT.
+// CONF::$LOCAL_FILE_BASE_DIRECTORY = '/web/public_html'; Override the DOCUMENT_ROOT.
 
-define ('MEMORY_LIMIT', '50M');                   // Set PHP memory limit
+CONF::$MEMORY_LIMIT = '50M';                   // Set PHP memory limit
 
 // Image size and defaults
-define ('DEFAULT_Q', 85);                         // Default image quality (&q=85)
-define ('DEFAULT_ZC', 1);                         // Default zoom/crop setting (&zc=1)
-define ('DEFAULT_F', '');                         // Default image filters
-define ('DEFAULT_S', 0);                          // Default sharpen value
-define ('DEFAULT_CC', 'ffffff');                  // Default canvas color
-define ('DEFAULT_WIDTH', 300);                    // Default thumbnail width (&w=240)
-define ('DEFAULT_HEIGHT', 300);                   // Default thumbnail height (&h=240)
-define ('MAX_WIDTH', 1920);                       // Maximum image width
-define ('MAX_HEIGHT', 1920);                      // Maximum image height
+CONF::$DEFAULT_Q = 85;                         // Default image quality (&q=85)
+CONF::$DEFAULT_ZC = 1;                         // Default zoom/crop setting (&zc=1)
+CONF::$DEFAULT_F = '';                         // Default image filters
+CONF::$DEFAULT_S = 0;                          // Default sharpen value
+CONF::$DEFAULT_CC = 'ffffff';                  // Default canvas color
+CONF::$DEFAULT_WIDTH = 300;                    // Default thumbnail width (&w=240)
+CONF::$DEFAULT_HEIGHT = 300;                   // Default thumbnail height (&h=240)
+CONF::$MAX_WIDTH = 1920;                       // Maximum image width
+CONF::$MAX_HEIGHT = 1920;                      // Maximum image height
 
-define ('NOT_FOUND_IMAGE', '');                   // Image to serve if any 404 occurs 
-define ('ERROR_IMAGE', '');                       // Image to serve if an error occurs instead of showing error message 
-define ('PNG_IS_TRANSPARENT', FALSE);             // Define if a png image should have a transparent background color.
+CONF::$NOT_FOUND_IMAGE = '';                   // Image to serve if any 404 occurs 
+CONF::$ERROR_IMAGE = '';                       // Image to serve if an error occurs instead of showing error message 
+CONF::$PNG_IS_TRANSPARENT = FALSE;             // Define if a png image should have a transparent background color.
                                                   // Use False value if you want to display a custom coloured canvas_colour 
 
 // Image fetching and caching
-define ('FILE_CACHE_ENABLED', TRUE);                 // Should we store resized/modified images on disk to speed things up?
-define ('FILE_CACHE_TIME_BETWEEN_CLEANS', 60*60*24); // How often the cache is cleaned 
+CONF::$FILE_CACHE_ENABLED = TRUE;                 // Should we store resized/modified images on disk to speed things up?
+CONF::$FILE_CACHE_TIME_BETWEEN_CLEANS = 60*60*24; // How often the cache is cleaned 
 
-define ('FILE_CACHE_MAX_FILE_AGE', 60*60*24);        // How old does a file have to be to be deleted from the cache
-define ('FILE_CACHE_SUFFIX', '.cache.txt');             // What to put at the end of all files in the cache directory so we can identify them
-define ('FILE_CACHE_PREFIX', 'tt');                  // What to put at the beg of all files in the cache directory so we can identify them
-define ('FILE_CACHE_DIRECTORY', './cache');          // Directory where images are cached.
+CONF::$FILE_CACHE_MAX_FILE_AGE = 60*60*24;        // How old does a file have to be to be deleted from the cache
+CONF::$FILE_CACHE_SUFFIX = '.cache.txt';             // What to put at the end of all files in the cache directory so we can identify them
+CONF::$FILE_CACHE_PREFIX = 'tt';                  // What to put at the beg of all files in the cache directory so we can identify them
+CONF::$FILE_CACHE_DIRECTORY = './cache';          // Directory where images are cached.
                                                      // Left blank it will use the system temporary directory (which is better for security)
-define ('MAX_FILE_SIZE', 10485760);                  // 10 MB is 10485760. This is the max internal or external file size that we'll process.
-define ('WAIT_BETWEEN_FETCH_ERRORS', 3600);          // Time to wait between errors fetching remote file
+CONF::$MAX_FILE_SIZE = 10485760;                  // 10 MB is 10485760. This is the max internal or external file size that we'll process.
+CONF::$WAIT_BETWEEN_FETCH_ERRORS = 3600;          // Time to wait between errors fetching remote file
 
 // Browser caching
-define ('BROWSER_CACHE_MAX_AGE', 60*60*24*10);       // Time to cache in the browser
-define ('BROWSER_CACHE_DISABLE', false);             // Use for testing if you want to disable all browser caching
+CONF::$BROWSER_CACHE_MAX_AGE = 60*60*24*10;       // Time to cache in the browser
+CONF::$BROWSER_CACHE_DISABLE = false;             // Use for testing if you want to disable all browser caching
 
 
 
 // If ALLOW_EXTERNAL is true and ALLOW_ALL_EXTERNAL_SITES is false,
 // then external images will only be fetched from these domains and their subdomains. 
-define ('ALLOW_EXTERNAL', false);            // Allow image fetching from external websites.
+CONF::$ALLOW_EXTERNAL = false;            // Allow image fetching from external websites.
                                              // Will check against ALLOWED_SITES if ALLOW_ALL_EXTERNAL_SITES is false
-define ('ALLOW_ALL_EXTERNAL_SITES', false);  // Less secure. 
+CONF::$ALLOW_ALL_EXTERNAL_SITES = false;  // Less secure. 
 
-global $ALLOWED_SITES;
-$ALLOWED_SITES = array ();
+CONF::$ALLOWED_SITES = array ();
 
 /*
-$ALLOWED_SITES = array (
+CONF::$ALLOWED_SITES = array (
     'flickr.com',
     'staticflickr.com',
     'picasa.com',
@@ -74,10 +73,10 @@ $ALLOWED_SITES = array (
 
 //These are now disabled by default because the file sizes of PNGs (and GIFs) are much smaller than we used to generate. 
 //They only work for PNGs. GIFs and JPEGs are not affected.
-define ('OPTIPNG_ENABLED', false);  
-define ('OPTIPNG_PATH', '/usr/bin/optipng'); //This will run first because it gives better compression than pngcrush. 
-define ('PNGCRUSH_ENABLED', false); 
-define ('PNGCRUSH_PATH', '/usr/bin/pngcrush'); //This will only run if OPTIPNG_PATH is not set or is not valid
+CONF::$OPTIPNG_ENABLED = false;  
+CONF::$OPTIPNG_PATH = '/usr/bin/optipng'; //This will run first because it gives better compression than pngcrush. 
+CONF::$PNGCRUSH_ENABLED = false; 
+CONF::$PNGCRUSH_PATH = '/usr/bin/pngcrush'; //This will only run if OPTIPNG_PATH is not set or is not valid
 
 /*
     -------====Website Screenshots configuration - BETA====-------
@@ -116,17 +115,17 @@ define ('PNGCRUSH_PATH', '/usr/bin/pngcrush'); //This will only run if OPTIPNG_P
 
 
 */
-define ('WEBSHOT_ENABLED', false);            //Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
-define ('WEBSHOT_CUTYCAPT', '/usr/local/bin/CutyCapt'); //The path to CutyCapt. 
-define ('WEBSHOT_XVFB', '/usr/bin/xvfb-run');        //The path to the Xvfb server
-define ('WEBSHOT_SCREEN_X', '1024');           //1024 works ok
-define ('WEBSHOT_SCREEN_Y', '768');            //768 works ok
-define ('WEBSHOT_COLOR_DEPTH', '24');          //I haven't tested anything besides 24
-define ('WEBSHOT_IMAGE_FORMAT', 'png');        //png is about 2.5 times the size of jpg but is a LOT better quality
-define ('WEBSHOT_TIMEOUT', '20');              //Seconds to wait for a webshot
-define ('WEBSHOT_USER_AGENT', "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.9.2.18) Gecko/20110614 Firefox/3.6.18"); //I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
-define ('WEBSHOT_JAVASCRIPT_ON', true);        //Setting to false might give you a slight speedup and block ads. But it could cause other issues.
-define ('WEBSHOT_JAVA_ON', false);             //Have only tested this as fase
-define ('WEBSHOT_PLUGINS_ON', true);           //Enable flash and other plugins
-define ('WEBSHOT_PROXY', '');                  //In case you're behind a proxy server. 
-define ('WEBSHOT_XVFB_RUNNING', false);        //ADVANCED: Enable this if you've got Xvfb running in the background.
+CONF::$WEBSHOT_ENABLED = false;            //Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
+CONF::$WEBSHOT_CUTYCAPT = '/usr/local/bin/CutyCapt'; //The path to CutyCapt. 
+CONF::$WEBSHOT_XVFB = '/usr/bin/xvfb-run';        //The path to the Xvfb server
+CONF::$WEBSHOT_SCREEN_X = '1024';           //1024 works ok
+CONF::$WEBSHOT_SCREEN_Y = '768';            //768 works ok
+CONF::$WEBSHOT_COLOR_DEPTH = '24';          //I haven't tested anything besides 24
+CONF::$WEBSHOT_IMAGE_FORMAT = 'png';        //png is about 2.5 times the size of jpg but is a LOT better quality
+CONF::$WEBSHOT_TIMEOUT = '20';              //Seconds to wait for a webshot
+CONF::$WEBSHOT_USER_AGENT = "Mozilla/5.0 (Windows; U; Windows NT 5.1; en-GB; rv:1.9.2.18) Gecko/20110614 Firefox/3.6.18"; //I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
+CONF::$WEBSHOT_JAVASCRIPT_ON = true;        //Setting to false might give you a slight speedup and block ads. But it could cause other issues.
+CONF::$WEBSHOT_JAVA_ON = false;             //Have only tested this as fase
+CONF::$WEBSHOT_PLUGINS_ON = true;           //Enable flash and other plugins
+CONF::$WEBSHOT_PROXY = '';                  //In case you're behind a proxy server. 
+CONF::$WEBSHOT_XVFB_RUNNING = false;        //ADVANCED: Enable this if you've got Xvfb running in the background.
