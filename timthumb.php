@@ -202,40 +202,32 @@ class timthumb {
         return false;
     }
     protected function tryBrowserCache(){
-        if(BROWSER_CACHE_DISABLE){ $this->debug(3, "Browser caching is disabled"); return false; }
-        if(!empty($_SERVER['HTTP_IF_MODIFIED_SINCE']) ){
-            $this->debug(3, "Got a conditional get");
-            $mtime = false;
-            //We've already checked if the real file exists in the constructor
-            if(! is_file($this->cachefile)){
-                //If we don't have something cached, regenerate the cached image.
-                return false;
-            }
-            if($this->localImageMTime){
-                $mtime = $this->localImageMTime;
-                $this->debug(3, "Local real file's modification time is $mtime");
-            } else if(is_file($this->cachefile)){ //If it's not a local request then use the mtime of the cached file to determine the 304
-                $mtime = @filemtime($this->cachefile);
-                $this->debug(3, "Cached file's modification time is $mtime");
-            }
-            if(! $mtime){ return false; }
-
-            $iftime = strtotime($_SERVER['HTTP_IF_MODIFIED_SINCE']);
-            $this->debug(3, "The conditional get's if-modified-since unixtime is $iftime");
-            if($iftime < 1){
-                $this->debug(3, "Got an invalid conditional get modified since time. Returning false.");
-                return false;
-            }
-            if($iftime < $mtime){ //Real file or cache file has been modified since last request, so force refetch.
-                $this->debug(3, "File has been modified since last fetch.");
-                return false;
-            } else { //Otherwise serve a 304
-                $this->debug(3, "File has not been modified since last get, so serving a 304.");
-                header ($_SERVER['SERVER_PROTOCOL'] . ' 304 Not Modified');
-                $this->debug(1, "Returning 304 not modified");
-                return true;
-            }
+        
+        if(BROWSER_CACHE_DISABLE) {
+            $this->debug(3, "Browser caching is disabled"); return false;
         }
+        
+        //We've already checked if the real file exists in the constructor
+        if(! is_file($this->cachefile)){
+            //If we don't have something cached, regenerate the cached image.
+            return false;
+        }
+        
+        $mtime = @filemtime($this->cachefile);
+        $this->debug(3, "Cached file's modification time is $mtime");
+        
+        if(! $mtime) return false;
+
+        $etag = '"' . $mtime . '"';
+        $this->debug(3, "The conditional get's etag unixtime is $iftime");
+        if($etag===filter_input(INPUT_SERVER, 'HTTP_IF_NONE_MATCH')) {
+            header ($_SERVER['SERVER_PROTOCOL'], true, 304);
+            $this->debug(1, "Returning 304 not modified");
+            $this->debug(3, "File has not been modified since last get, so serving a 304.");
+            header('Content-Length: 0');
+            exit;
+        }
+        header(sprintf('ETag: %s', $etag));
         return false;
     }
     protected function tryServerCache(){
@@ -934,12 +926,12 @@ class timthumb {
             $mimeType = 'image/jpeg';
         }
         $gmdate_expires = gmdate ('D, d M Y H:i:s', strtotime ('now +10 days')) . ' GMT';
-        $gmdate_modified = gmdate ('D, d M Y H:i:s') . ' GMT';
         // send content headers then display image
         header ('Content-Type: ' . $mimeType);
         header ('Accept-Ranges: none'); //Changed this because we don't accept range requests
-        header ('Last-Modified: ' . $gmdate_modified);
         header ('Content-Length: ' . $dataSize);
+        $etag = '"' . filemtime($this->cachefile) . '"';
+        header(sprintf('ETag: %s', $etag));
         if(BROWSER_CACHE_DISABLE){
             $this->debug(3, "Browser cache is disabled so setting non-caching headers.");
             header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
