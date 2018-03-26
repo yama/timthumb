@@ -43,9 +43,9 @@ class timthumb {
         global $ALLOWED_SITES;
         $this->startTime = microtime(true);
         date_default_timezone_set('UTC');
+        $this->loadConfig();
         $this->debug(1, "Starting new request from " . $this->getIP() . " to " . $_SERVER['REQUEST_URI']);
         $this->calcDocRoot();
-        $this->loadConfig();
         //On windows systems I'm assuming fileinode returns an empty string or a number that doesn't change. Check this.
         $this->salt = @filemtime(__FILE__) . '-' . @fileinode(__FILE__);
         $this->debug(3, 'Salt is: ' . $this->salt);
