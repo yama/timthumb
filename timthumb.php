@@ -13,6 +13,7 @@
  */
 
 define ('VERSION', '2.8.15'); // Version of this script 
+if(!isset($_SERVER['REQUEST_TIME_FLOAT'])) $_SERVER['REQUEST_TIME_FLOAT'] = microtime(true);
 
 timthumb::start();
 
@@ -41,7 +42,7 @@ class timthumb {
     
     public function __construct(){
         global $ALLOWED_SITES;
-        $this->startTime = microtime(true);
+        
         date_default_timezone_set('UTC');
         $this->loadConfig();
         $this->debug(1, "Starting new request from " . $this->getIP() . " to " . $_SERVER['REQUEST_URI']);
@@ -994,7 +995,7 @@ class timthumb {
         if(DEBUG_ON===false)     return;
         if(DEBUG_LEVEL < $level) return;
         
-        $execTime = sprintf('%.6f', microtime(true) - $this->startTime);
+        $execTime = sprintf('%.6f', microtime(true) - $_SERVER['REQUEST_TIME_FLOAT']);
         $tick = sprintf('%.6f', 0);
         if($this->lastBenchTime > 0){
             $tick = sprintf('%.6f', microtime(true) - $this->lastBenchTime);
