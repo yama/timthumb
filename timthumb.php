@@ -12,7 +12,7 @@
  * 
  */
 
-define ('VERSION', '2.8.14'); // Version of this script 
+define ('VERSION', '2.8.15'); // Version of this script 
 
 timthumb::start();
 
