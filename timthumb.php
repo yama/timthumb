@@ -999,15 +999,16 @@ class timthumb {
         }
     }
     protected function debug($level, $msg){
-        if(DEBUG_ON && $level <= DEBUG_LEVEL){
-            $execTime = sprintf('%.6f', microtime(true) - $this->startTime);
-            $tick = sprintf('%.6f', 0);
-            if($this->lastBenchTime > 0){
-                $tick = sprintf('%.6f', microtime(true) - $this->lastBenchTime);
-            }
-            $this->lastBenchTime = microtime(true);
-            error_log("TimThumb Debug line " . __LINE__ . " [$execTime : $tick]: $msg");
+        if(DEBUG_ON===false)     return;
+        if(DEBUG_LEVEL < $level) return;
+        
+        $execTime = sprintf('%.6f', microtime(true) - $this->startTime);
+        $tick = sprintf('%.6f', 0);
+        if($this->lastBenchTime > 0){
+            $tick = sprintf('%.6f', microtime(true) - $this->lastBenchTime);
         }
+        $this->lastBenchTime = microtime(true);
+        error_log("TimThumb Debug line " . __LINE__ . " [$execTime : $tick]: $msg");
     }
     protected function sanityFail($msg){
         return $this->error("There is a problem in the timthumb code. Message: Please report this error at <a href='http://code.google.com/p/timthumb/issues/list'>timthumb's bug tracking page</a>: $msg");
