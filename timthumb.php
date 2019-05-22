@@ -39,6 +39,7 @@ class timthumb {
     protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //"; //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
     protected static $curlDataWritten = 0;
     protected static $curlFH = false;
+    protected $init_rs;
 
     public function __construct(){
         date_default_timezone_set('UTC');
@@ -53,7 +54,8 @@ class timthumb {
                 @mkdir(CONF::$FILE_CACHE_DIRECTORY);
                 if(! is_dir(CONF::$FILE_CACHE_DIRECTORY)){
                     $this->error("Could not create the file cache directory.");
-                    return false;
+                    $this->init_rs = false;
+                    return;
                 }
             }
             $this->cacheDirectory = CONF::$FILE_CACHE_DIRECTORY;
@@ -73,7 +75,8 @@ class timthumb {
 
         if(strlen($this->src) <= 3){
             $this->error("No image specified");
-            return false;
+            $this->init_rs = false;
+            return;
         }
         $myhost = '@^https?://(?:www\.)?' . $this->myHost . '(?:$|/)@i';
         if(CONF::$BLOCK_EXTERNAL_LEECHERS && isset($_SERVER['HTTP_REFERER'])) {
@@ -87,7 +90,8 @@ class timthumb {
         }
         if($this->isURL && (! CONF::$ALLOW_EXTERNAL)){
             $this->error("You are not allowed to fetch images from an external website.");
-            return false;
+            $this->init_rs = false;
+            return;
         }
         if($this->isURL){
             if(CONF::$ALLOW_ALL_EXTERNAL_SITES){
@@ -102,7 +106,9 @@ class timthumb {
                     }
                 }
                 if(! $allowed){
-                    return $this->error("You may not fetch images from that site. To enable this site in timthumb, you can either add it to \$ALLOWED_SITES and set CONF::$ALLOW_EXTERNAL=true. Or you can set CONF::$ALLOW_ALL_EXTERNAL_SITES=true, depending on your security needs.");
+                     $this->error("You may not fetch images from that site. To enable this site in timthumb, you can either add it to \$ALLOWED_SITES and set CONF::$ALLOW_EXTERNAL=true. Or you can set CONF::$ALLOW_ALL_EXTERNAL_SITES=true, depending on your security needs.");
+                    $this->init_rs = false;
+                    return;
                 }
             }
         }
@@ -118,7 +124,8 @@ class timthumb {
                 $this->debug(1, "Could not find the local image: {$this->localImage}");
                 $this->error("Could not find the internal image you specified.");
                 $this->set404();
-                return false;
+                $this->init_rs = false;
+                return;
             }
             $this->debug(1, "Local image path is {$this->localImage}");
             $this->localImageMTime = @filemtime($this->localImage);
@@ -126,8 +133,8 @@ class timthumb {
             $this->cachefile = $this->cacheDirectory . '/' . CONF::$FILE_CACHE_PREFIX . $cachePrefix . md5($this->salt . $this->localImageMTime . $_SERVER ['QUERY_STRING'] . $this->fileCacheVersion) . CONF::$FILE_CACHE_SUFFIX;
         }
         $this->debug(2, "Cache file is: " . $this->cachefile);
-
-        return true;
+        $this->init_rs = false;
+        return;
     }
     public function __destruct(){
         foreach($this->toDeletes as $del){
@@ -220,10 +227,10 @@ class timthumb {
         $etag = '"' . $mtime . '"';
         $this->debug(3, "The conditional get's etag unixtime is $iftime");
         if($etag===filter_input(INPUT_SERVER, 'HTTP_IF_NONE_MATCH')) {
-            header ($_SERVER['SERVER_PROTOCOL'], true, 304);
             $this->debug(1, "Returning 304 not modified");
             $this->debug(3, "File has not been modified since last get, so serving a 304.");
             header('Content-Length: 0');
+            header ($_SERVER['SERVER_PROTOCOL'], true, 304);
             exit;
         }
         header(sprintf('ETag: %s', $etag));
