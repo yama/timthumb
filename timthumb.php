@@ -106,7 +106,13 @@ class timthumb {
                     }
                 }
                 if(! $allowed){
-                    $this->error("You may not fetch images from that site. To enable this site in timthumb, you can either add it to \$ALLOWED_SITES and set CONF::$ALLOW_EXTERNAL=true. Or you can set CONF::$ALLOW_ALL_EXTERNAL_SITES=true, depending on your security needs.");
+                    $this->error(
+                        sprintf(
+                            'You may not fetch images from that site. To enable this site in timthumb, you can either add it to $ALLOWED_SITES and set %s=true. Or you can set %s=true, depending on your security needs.'
+                            , CONF::$ALLOW_EXTERNAL
+                            , CONF::$ALLOW_ALL_EXTERNAL_SITES
+                        )
+                    );
                     $this->init_rs = false;
                     return;
                 }
@@ -163,7 +169,13 @@ class timthumb {
     public function run(){
         if($this->isURL){
             if(! CONF::$ALLOW_EXTERNAL){
-                $this->debug(1, "Got a request for an external image but CONF::$ALLOW_EXTERNAL is disabled so returning error msg.");
+                $this->debug(
+                    1
+                    , sprintf(
+                        "Got a request for an external image but %s is disabled so returning error msg."
+                        , CONF::$ALLOW_EXTERNAL
+                    )
+                );
                 $this->error("You are not allowed to fetch images from an external website.");
                 return false;
             }
@@ -173,7 +185,12 @@ class timthumb {
                     $this->debug(3, "webshot param is set, so we're going to take a webshot.");
                     $this->serveWebshot();
                 } else {
-                    $this->error("You added the webshot parameter but webshots are disabled on this server. You need to set CONF::$WEBSHOT_ENABLED == true to enable webshots.");
+                    $this->error(
+                        sprintf(
+                            "You added the webshot parameter but webshots are disabled on this server. You need to set %s == true to enable webshots."
+                            , CONF::$WEBSHOT_ENABLED
+                        )
+                    );
                 }
             } else {
                 $this->debug(3, "webshot is NOT set so we're going to try to fetch a regular image.");
