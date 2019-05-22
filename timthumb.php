@@ -230,7 +230,7 @@ class timthumb {
             $this->debug(1, "Returning 304 not modified");
             $this->debug(3, "File has not been modified since last get, so serving a 304.");
             header('Content-Length: 0');
-            header ($_SERVER['SERVER_PROTOCOL'], true, 304);
+            header ('HTTP', true, 304);
             exit;
         }
         header(sprintf('ETag: %s', $etag));
