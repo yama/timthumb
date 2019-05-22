@@ -106,7 +106,7 @@ class timthumb {
                     }
                 }
                 if(! $allowed){
-                     $this->error("You may not fetch images from that site. To enable this site in timthumb, you can either add it to \$ALLOWED_SITES and set CONF::$ALLOW_EXTERNAL=true. Or you can set CONF::$ALLOW_ALL_EXTERNAL_SITES=true, depending on your security needs.");
+                    $this->error("You may not fetch images from that site. To enable this site in timthumb, you can either add it to \$ALLOWED_SITES and set CONF::$ALLOW_EXTERNAL=true. Or you can set CONF::$ALLOW_ALL_EXTERNAL_SITES=true, depending on your security needs.");
                     $this->init_rs = false;
                     return;
                 }
@@ -187,7 +187,7 @@ class timthumb {
         return true;
     }
     protected function handleErrors(){
-        if($this->haveErrors()){ 
+        if($this->haveErrors()){
             if(CONF::$NOT_FOUND_IMAGE && $this->is404()){
                 if($this->serveImg(CONF::$NOT_FOUND_IMAGE)){
                     exit(0);
@@ -202,8 +202,8 @@ class timthumb {
                     $this->error("Additionally, the error image that is configured could not be found or there was an error serving it.");
                 }
             }
-            $this->serveErrors(); 
-            exit(0); 
+            $this->serveErrors();
+            exit(0);
         }
         return false;
     }
@@ -253,7 +253,7 @@ class timthumb {
                         $this->debug(3, "Empty cachefile is still fresh so returning message saying we had an error fetching this image from remote host.");
                         $this->set404();
                         $this->error("An error occured fetching image.");
-                        return false; 
+                        return false;
                     }
                 }
             } else {
@@ -315,7 +315,7 @@ class timthumb {
         if($this->processImageAndWriteToCache($this->localImage)){
             $this->serveCacheFile();
             return true;
-        } else { 
+        } else {
             return false;
         }
     }
@@ -449,7 +449,7 @@ class timthumb {
         imagealphablending ($canvas, false);
 
         if (strlen($canvas_color) == 3) { //if is 3-char notation, edit string into 6-char notation
-            $canvas_color =  str_repeat(substr($canvas_color, 0, 1), 2) . str_repeat(substr($canvas_color, 1, 1), 2) . str_repeat(substr($canvas_color, 2, 1), 2); 
+            $canvas_color =  str_repeat(substr($canvas_color, 0, 1), 2) . str_repeat(substr($canvas_color, 1, 1), 2) . str_repeat(substr($canvas_color, 2, 1), 2);
         } else if (strlen($canvas_color) != 6) {
             $canvas_color = CONF::$DEFAULT_CC; // on error return default canvas color
         }
@@ -985,7 +985,7 @@ class timthumb {
         $rem = @$_SERVER["REMOTE_ADDR"];
         $ff = @$_SERVER["HTTP_X_FORWARDED_FOR"];
         $ci = @$_SERVER["HTTP_CLIENT_IP"];
-        if(preg_match('/^(?:192\.168|172\.16|10\.|127\.)/', $rem)){ 
+        if(preg_match('/^(?:192\.168|172\.16|10\.|127\.)/', $rem)){
             if($ff){ return $ff; }
             if($ci){ return $ci; }
             return $rem;
@@ -1133,10 +1133,10 @@ class timthumb {
     // base64 encoded red image that says 'no hotlinkers'
     // nothing to worry about! :)
     protected function dispRedImage() {
-        
+
         $myhost = '@^https?://(?:www\.)?' . $this->myHost . '(?:$|/)@i';
         if(preg_match($myhost, $_SERVER['HTTP_REFERER'])) return;
-        
+
         $imgData = base64_decode("R0lGODlhUAAMAIAAAP8AAP///yH5BAAHAP8ALAAAAABQAAwAAAJpjI+py+0Po5y0OgAMjjv01YUZ\nOGplhWXfNa6JCLnWkXplrcBmW+spbwvaVr/cDyg7IoFC2KbYVC2NQ5MQ4ZNao9Ynzjl9ScNYpneb\nDULB3RP6JuPuaGfuuV4fumf8PuvqFyhYtjdoeFgAADs=");
         header('Content-Type: image/gif');
         header('Content-Length: ' . strlen($imgData));
