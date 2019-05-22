@@ -154,16 +154,16 @@ class timthumb {
         $tim->handleErrors();
         $tim->securityChecks();
         if($tim->tryBrowserCache()){
-            exit(0);
+            exit;
         }
         $tim->handleErrors();
         if(CONF::$FILE_CACHE_ENABLED && $tim->tryServerCache()){
-            exit(0);
+            exit;
         }
         $tim->handleErrors();
         $tim->run();
         $tim->handleErrors();
-        exit(0);
+        exit;
     }
 
     public function run(){
@@ -333,6 +333,7 @@ class timthumb {
 
         return false;
     }
+
     protected function cleanCache(){
         if (CONF::$FILE_CACHE_TIME_BETWEEN_CLEANS < 0) {
             return;
@@ -639,7 +640,7 @@ class timthumb {
             return $this->sanityFail("Could not match mime type after verifying it previously.");
         }
 
-        if($imgType == 'png' && CONF::$OPTIPNG_ENABLED && CONF::$OPTIPNG_PATH && @is_file(CONF::$OPTIPNG_PATH)){
+        if($imgType === 'png' && CONF::$OPTIPNG_ENABLED && CONF::$OPTIPNG_PATH && @is_file(CONF::$OPTIPNG_PATH)){
             $exec = CONF::$OPTIPNG_PATH;
             $this->debug(3, "optipng'ing $tempfile");
             $presize = filesize($tempfile);
