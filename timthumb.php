@@ -44,7 +44,7 @@ class timthumb {
     public function __construct(){
         date_default_timezone_set('UTC');
         $this->loadConfig();
-        $this->debug(1, "Starting new request from " . $this->getIP() . " to " . $_SERVER['REQUEST_URI']);
+        $this->debug(1, sprintf('Starting new request from %s to %s', $this->getIP(), $_SERVER['REQUEST_URI']));
         $this->calcDocRoot();
         //On windows systems I'm assuming fileinode returns an empty string or a number that doesn't change. Check this.
         $this->salt = @filemtime(__FILE__) . '-' . @fileinode(__FILE__);
@@ -53,14 +53,14 @@ class timthumb {
             if(! is_dir(CONF::$FILE_CACHE_DIRECTORY)){
                 @mkdir(CONF::$FILE_CACHE_DIRECTORY);
                 if(! is_dir(CONF::$FILE_CACHE_DIRECTORY)){
-                    $this->error("Could not create the file cache directory.");
+                    $this->error('Could not create the file cache directory.');
                     $this->init_rs = false;
                     return;
                 }
             }
             $this->cacheDirectory = CONF::$FILE_CACHE_DIRECTORY;
             if (!touch($this->cacheDirectory . '/index.html')) {
-                $this->error("Could not create the index.html file - to fix this create an empty file named index.html file in the cache directory.");
+                $this->error('Could not create the index.html file - to fix this create an empty file named index.html file in the cache directory.');
             }
         } else {
             $this->cacheDirectory = sys_get_temp_dir();
@@ -74,7 +74,7 @@ class timthumb {
         $this->src = preg_replace('/https?:\/\/(?:www\.)?' . $this->myHost . '/i', '', $this->src);
 
         if(strlen($this->src) <= 3){
-            $this->error("No image specified");
+            $this->error('No image specified');
             $this->init_rs = false;
             return;
         }
@@ -83,25 +83,29 @@ class timthumb {
             $this->dispRedImage();
         }
         if(preg_match('/^https?:\/\/[^\/]+/i', $this->src)){
-            $this->debug(2, "Is a request for an external URL: " . $this->src);
+            $this->debug(2, 'Is a request for an external URL: ' . $this->src);
             $this->isURL = true;
         } else {
-            $this->debug(2, "Is a request for an internal file: " . $this->src);
+            $this->debug(2, 'Is a request for an internal file: ' . $this->src);
         }
         if($this->isURL && (! CONF::$ALLOW_EXTERNAL)){
-            $this->error("You are not allowed to fetch images from an external website.");
+            $this->error('You are not allowed to fetch images from an external website.');
             $this->init_rs = false;
             return;
         }
         if($this->isURL){
             if(CONF::$ALLOW_ALL_EXTERNAL_SITES){
-                $this->debug(2, "Fetching from all external sites is enabled.");
+                $this->debug(2, 'Fetching from all external sites is enabled.');
             } else {
-                $this->debug(2, "Fetching only from selected external sites is enabled.");
+                $this->debug(2, 'Fetching only from selected external sites is enabled.');
                 $allowed = false;
                 foreach(CONF::$ALLOWED_SITES as $site){
-                    if ((strtolower(substr($this->url['host'],-strlen($site)-1)) === strtolower(".$site")) || (strtolower($this->url['host'])===strtolower($site))) {
-                        $this->debug(3, "URL hostname {$this->url['host']} matches $site so allowing.");
+                    if ((strtolower(substr($this->url['host'],-strlen($site)-1)) === strtolower('.' . $site)) || (strtolower($this->url['host'])===strtolower($site))) {
+                        $this->debug(3, sprintf(
+                            'URL hostname %s matches %s so allowing.'
+                            , $this->url['host']
+                            , $site
+                        ));
                         $allowed = true;
                     }
                 }
@@ -127,24 +131,24 @@ class timthumb {
         } else {
             $this->localImage = $this->getLocalImagePath($this->src);
             if(! $this->localImage){
-                $this->debug(1, "Could not find the local image: {$this->localImage}");
-                $this->error("Could not find the internal image you specified.");
+                $this->debug(1, 'Could not find the local image: ' . $this->localImage);
+                $this->error('Could not find the internal image you specified.');
                 $this->set404();
                 $this->init_rs = false;
                 return;
             }
-            $this->debug(1, "Local image path is {$this->localImage}");
+            $this->debug(1, 'Local image path is ' . $this->localImage);
             $this->localImageMTime = @filemtime($this->localImage);
             //We include the mtime of the local file in case in changes on disk.
             $this->cachefile = $this->cacheDirectory . '/' . CONF::$FILE_CACHE_PREFIX . $cachePrefix . md5($this->salt . $this->localImageMTime . $_SERVER ['QUERY_STRING'] . $this->fileCacheVersion) . CONF::$FILE_CACHE_SUFFIX;
         }
-        $this->debug(2, "Cache file is: " . $this->cachefile);
+        $this->debug(2, 'Cache file is: ' . $this->cachefile);
         $this->init_rs = false;
         return;
     }
     public function __destruct(){
         foreach($this->toDeletes as $del){
-            $this->debug(2, "Deleting temp file $del");
+            $this->debug(2, 'Deleting temp file ' . $del);
             @unlink($del);
         }
     }
@@ -172,14 +176,14 @@ class timthumb {
                 $this->debug(
                     1
                     , sprintf(
-                        "Got a request for an external image but %s is disabled so returning error msg."
+                        'Got a request for an external image but %s is disabled so returning error msg.'
                         , CONF::$ALLOW_EXTERNAL
                     )
                 );
-                $this->error("You are not allowed to fetch images from an external website.");
+                $this->error('You are not allowed to fetch images from an external website.');
                 return false;
             }
-            $this->debug(3, "Got request for external image. Starting serveExternalImage.");
+            $this->debug(3, 'Got request for external image. Starting serveExternalImage.');
             if($this->param('webshot')){
                 if(CONF::$WEBSHOT_ENABLED){
                     $this->debug(3, "webshot param is set, so we're going to take a webshot.");
@@ -187,7 +191,7 @@ class timthumb {
                 } else {
                     $this->error(
                         sprintf(
-                            "You added the webshot parameter but webshots are disabled on this server. You need to set %s == true to enable webshots."
+                            'You added the webshot parameter but webshots are disabled on this server. You need to set %s == true to enable webshots.'
                             , CONF::$WEBSHOT_ENABLED
                         )
                     );
@@ -198,7 +202,7 @@ class timthumb {
 
             }
         } else {
-            $this->debug(3, "Got request for internal image. Starting serveInternalImage()");
+            $this->debug(3, 'Got request for internal image. Starting serveInternalImage()');
             $this->serveInternalImage();
         }
         return true;
@@ -210,14 +214,14 @@ class timthumb {
                     exit;
                 }
 
-                $this->error("Additionally, the 404 image that is configured could not be found or there was an error serving it.");
+                $this->error('Additionally, the 404 image that is configured could not be found or there was an error serving it.');
             }
             if(CONF::$ERROR_IMAGE){
                 if($this->serveImg(CONF::$ERROR_IMAGE)){
                     exit;
                 }
 
-                $this->error("Additionally, the error image that is configured could not be found or there was an error serving it.");
+                $this->error('Additionally, the error image that is configured could not be found or there was an error serving it.');
             }
             $this->serveErrors();
             exit;
@@ -227,7 +231,7 @@ class timthumb {
     protected function tryBrowserCache(){
 
         if(CONF::$BROWSER_CACHE_DISABLE) {
-            $this->debug(3, "Browser caching is disabled"); return false;
+            $this->debug(3, 'Browser caching is disabled'); return false;
         }
 
         //We've already checked if the real file exists in the constructor
@@ -237,15 +241,15 @@ class timthumb {
         }
 
         $mtime = @filemtime($this->cachefile);
-        $this->debug(3, "Cached file's modification time is $mtime");
+        $this->debug(3, sprintf("Cached file's modification time is %s", $mtime));
 
         if(! $mtime) return false;
 
-        $etag = '"' . $mtime . '"';
+        $etag = sprintf('"%s"', $mtime);
         $this->debug(3, "The conditional get's etag unixtime is $iftime");
         if($etag===filter_input(INPUT_SERVER, 'HTTP_IF_NONE_MATCH')) {
-            $this->debug(1, "Returning 304 not modified");
-            $this->debug(3, "File has not been modified since last get, so serving a 304.");
+            $this->debug(1, 'Returning 304 not modified');
+            $this->debug(3, 'File has not been modified since last get, so serving a 304.');
             header('Content-Length: 0');
             header ('HTTP', true, 304);
             exit;
@@ -254,30 +258,36 @@ class timthumb {
         return false;
     }
     protected function tryServerCache(){
-        $this->debug(3, "Trying server cache");
+        $this->debug(3, 'Trying server cache');
         if(is_file($this->cachefile)){
-            $this->debug(3, "Cachefile {$this->cachefile} exists");
+            $this->debug(3, sprintf('Cachefile %s exists', $this->cachefile));
             if($this->isURL){
-                $this->debug(3, "This is an external request, so checking if the cachefile is empty which means the request failed previously.");
+                $this->debug(3, 'This is an external request, so checking if the cachefile is empty which means the request failed previously.');
                 if(filesize($this->cachefile) < 1){
-                    $this->debug(3, "Found an empty cachefile indicating a failed earlier request. Checking how old it is.");
+                    $this->debug(3, 'Found an empty cachefile indicating a failed earlier request. Checking how old it is.');
                     //Fetching error occured previously
                     if(time() - @filemtime($this->cachefile) > CONF::$WAIT_BETWEEN_FETCH_ERRORS){
-                        $this->debug(3, "File is older than " . CONF::$WAIT_BETWEEN_FETCH_ERRORS . " seconds. Deleting and returning false so app can try and load file.");
+                        $this->debug(3, sprintf(
+                            'File is older than %d seconds. Deleting and returning false so app can try and load file.'
+                            , CONF::$WAIT_BETWEEN_FETCH_ERRORS)
+                        );
                         @unlink($this->cachefile);
                         return false; //to indicate we didn't serve from cache and app should try and load
                     }
 
-                    $this->debug(3, "Empty cachefile is still fresh so returning message saying we had an error fetching this image from remote host.");
+                    $this->debug(3, 'Empty cachefile is still fresh so returning message saying we had an error fetching this image from remote host.');
                     $this->set404();
-                    $this->error("An error occured fetching image.");
+                    $this->error('An error occured fetching image.');
                     return false;
                 }
             } else {
-                $this->debug(3, "Trying to serve cachefile {$this->cachefile}");
+                $this->debug(3, sprintf(
+                    'Trying to serve cachefile %s'
+                    , $this->cachefile
+                ));
             }
             if($this->serveCacheFile()){
-                $this->debug(3, "Succesfully served cachefile {$this->cachefile}");
+                $this->debug(3, 'Succesfully served cachefile ' . $this->cachefile);
                 return true;
             }
 
@@ -655,7 +665,7 @@ class timthumb {
             } else {
                 $this->debug(1, "optipng did not change image size.");
             }
-        } else if($imgType == 'png' && CONF::$PNGCRUSH_ENABLED && CONF::$PNGCRUSH_PATH && @is_file(CONF::$PNGCRUSH_PATH)){
+        } else if($imgType === 'png' && CONF::$PNGCRUSH_ENABLED && CONF::$PNGCRUSH_PATH && @is_file(CONF::$PNGCRUSH_PATH)){
             $exec = CONF::$PNGCRUSH_PATH;
             $tempfile2 = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
             $this->debug(3, "pngcrush'ing $tempfile to $tempfile2");
@@ -726,7 +736,7 @@ class timthumb {
                 $this->debug(3, "Generated docRoot using PATH_TRANSLATED and PHP_SELF as: $docRoot");
             }
         }
-        if($docRoot && $_SERVER['DOCUMENT_ROOT'] != '/') {
+        if($docRoot && $_SERVER['DOCUMENT_ROOT'] !== '/') {
             $docRoot = rtrim($docRoot,'/');
         }
         $this->debug(3, "Doc root is: " . $docRoot);
@@ -778,7 +788,7 @@ class timthumb {
         $base = $this->docRoot;
 
         // account for Windows directory structure
-        if (strstr($_SERVER['SCRIPT_FILENAME'],':')) {
+        if (strpos($_SERVER['SCRIPT_FILENAME'], ':') !== false) {
             $sub_directories = explode('\\', str_replace($this->docRoot, '', $_SERVER['SCRIPT_FILENAME']));
         } else {
             $sub_directories = explode('/', str_replace($this->docRoot, '', $_SERVER['SCRIPT_FILENAME']));
@@ -945,7 +955,7 @@ class timthumb {
         if(! preg_match('@^image/@i', $mimeType)){
             $mimeType = 'image/' . $mimeType;
         }
-        if(strtolower($mimeType) == 'image/jpg'){
+        if(strtolower($mimeType) === 'image/jpg'){
             $mimeType = 'image/jpeg';
         }
         $gmdate_expires = gmdate ('D, d M Y H:i:s', strtotime ('now +10 days')) . ' GMT';
@@ -1106,7 +1116,7 @@ class timthumb {
             } else {
                 $this->lastURLError = $err;
             }
-            if(preg_match('/404/', $this->lastURLError)){
+            if(strpos($this->lastURLError, '404') !== false){
                 $this->set404();
             }
 
@@ -1133,7 +1143,7 @@ class timthumb {
             return true;
         }
         $content = @file_get_contents ($file);
-        if ($content != FALSE){
+        if ($content != false){
             echo $content;
             return true;
         }
