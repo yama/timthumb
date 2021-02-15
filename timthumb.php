@@ -12,8 +12,10 @@
  *
  */
 
-define ('VERSION', '2.8.15'); // Version of this script 
-if(!isset($_SERVER['REQUEST_TIME_FLOAT'])) $_SERVER['REQUEST_TIME_FLOAT'] = microtime(true);
+const VERSION = '2.8.15'; // Version of this script
+if(!isset($_SERVER['REQUEST_TIME_FLOAT'])) {
+    $_SERVER['REQUEST_TIME_FLOAT'] = microtime(true);
+}
 
 timthumb::start();
 
@@ -35,8 +37,10 @@ class timthumb {
     protected $lastBenchTime = 0;
     protected $cropTop = false;
     protected $salt = '';
-    protected $fileCacheVersion = 1; //Generally if timthumb.php is modifed (upgraded) then the salt changes and all cache files are recreated. This is a backup mechanism to force regen.
-    protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //"; //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
+    //Generally if timthumb.php is modifed (upgraded) then the salt changes and all cache files are recreated. This is a backup mechanism to force regen.
+    protected $fileCacheVersion = 1;
+    //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
+    protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //";
     protected static $curlDataWritten = 0;
     protected static $curlFH = false;
     protected $init_rs;
@@ -78,7 +82,6 @@ class timthumb {
             $this->init_rs = false;
             return;
         }
-        $myhost = '@^https?://(?:www\.)?' . $this->myHost . '(?:$|/)@i';
         if(CONF::$BLOCK_EXTERNAL_LEECHERS && isset($_SERVER['HTTP_REFERER'])) {
             $this->dispRedImage();
         }
@@ -100,7 +103,7 @@ class timthumb {
                 $this->debug(2, 'Fetching only from selected external sites is enabled.');
                 $allowed = false;
                 foreach(CONF::$ALLOWED_SITES as $site){
-                    if ((strtolower(substr($this->url['host'],-strlen($site)-1)) === strtolower('.' . $site)) || (strtolower($this->url['host'])===strtolower($site))) {
+                    if (strtolower(substr($this->url['host'],-strlen($site)-1)) === strtolower('.' . $site) || (strtolower($this->url['host'])===strtolower($site))) {
                         $this->debug(3, sprintf(
                             'URL hostname %s matches %s so allowing.'
                             , $this->url['host']
@@ -127,7 +130,14 @@ class timthumb {
         if($this->isURL){
             $arr = explode('&', $_SERVER ['QUERY_STRING']);
             asort($arr);
-            $this->cachefile = $this->cacheDirectory . '/' . CONF::$FILE_CACHE_PREFIX . $cachePrefix . md5($this->salt . implode('', $arr) . $this->fileCacheVersion) . CONF::$FILE_CACHE_SUFFIX;
+            $this->cachefile = sprintf(
+                '%s/%s%s%s%s',
+                $this->cacheDirectory,
+                CONF::$FILE_CACHE_PREFIX,
+                $cachePrefix,
+                md5($this->salt . implode('', $arr) . $this->fileCacheVersion),
+                CONF::$FILE_CACHE_SUFFIX
+            );
         } else {
             $this->localImage = $this->getLocalImagePath($this->src);
             if(! $this->localImage){
@@ -140,11 +150,17 @@ class timthumb {
             $this->debug(1, 'Local image path is ' . $this->localImage);
             $this->localImageMTime = @filemtime($this->localImage);
             //We include the mtime of the local file in case in changes on disk.
-            $this->cachefile = $this->cacheDirectory . '/' . CONF::$FILE_CACHE_PREFIX . $cachePrefix . md5($this->salt . $this->localImageMTime . $_SERVER ['QUERY_STRING'] . $this->fileCacheVersion) . CONF::$FILE_CACHE_SUFFIX;
+            $this->cachefile = sprintf(
+                '%s/%s%s%s%s',
+                $this->cacheDirectory,
+                CONF::$FILE_CACHE_PREFIX,
+                $cachePrefix,
+                md5($this->salt . $this->localImageMTime . $_SERVER ['QUERY_STRING'] . $this->fileCacheVersion),
+                CONF::$FILE_CACHE_SUFFIX
+            );
         }
         $this->debug(2, 'Cache file is: ' . $this->cachefile);
         $this->init_rs = false;
-        return;
     }
     public function __destruct(){
         foreach($this->toDeletes as $del){
@@ -171,39 +187,38 @@ class timthumb {
     }
 
     public function run(){
-        if($this->isURL){
-            if(! CONF::$ALLOW_EXTERNAL){
-                $this->debug(
-                    1
-                    , sprintf(
-                        'Got a request for an external image but %s is disabled so returning error msg.'
-                        , CONF::$ALLOW_EXTERNAL
-                    )
-                );
-                $this->error('You are not allowed to fetch images from an external website.');
-                return false;
-            }
-            $this->debug(3, 'Got request for external image. Starting serveExternalImage.');
-            if($this->param('webshot')){
-                if(CONF::$WEBSHOT_ENABLED){
-                    $this->debug(3, "webshot param is set, so we're going to take a webshot.");
-                    $this->serveWebshot();
-                } else {
-                    $this->error(
-                        sprintf(
-                            'You added the webshot parameter but webshots are disabled on this server. You need to set %s == true to enable webshots.'
-                            , CONF::$WEBSHOT_ENABLED
-                        )
-                    );
-                }
-            } else {
-                $this->debug(3, "webshot is NOT set so we're going to try to fetch a regular image.");
-                $this->serveExternalImage();
-
-            }
-        } else {
+        if(!$this->isURL) {
             $this->debug(3, 'Got request for internal image. Starting serveInternalImage()');
             $this->serveInternalImage();
+            return true;
+        }
+        if (!CONF::$ALLOW_EXTERNAL) {
+            $this->debug(
+                1
+                , sprintf(
+                    'Got a request for an external image but %s is disabled so returning error msg.'
+                    , CONF::$ALLOW_EXTERNAL
+                )
+            );
+            $this->error('You are not allowed to fetch images from an external website.');
+            return false;
+        }
+        $this->debug(3, 'Got request for external image. Starting serveExternalImage.');
+        if (!$this->param('webshot')) {
+            $this->debug(3, "webshot is NOT set so we're going to try to fetch a regular image.");
+            $this->serveExternalImage();
+            return true;
+        }
+        if (CONF::$WEBSHOT_ENABLED) {
+            $this->debug(3, "webshot param is set, so we're going to take a webshot.");
+            $this->serveWebshot();
+        } else {
+            $this->error(
+                sprintf(
+                    'You added the webshot parameter but webshots are disabled on this server. You need to set %s == true to enable webshots.'
+                    , CONF::$WEBSHOT_ENABLED
+                )
+            );
         }
         return true;
     }
