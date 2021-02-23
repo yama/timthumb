@@ -12,7 +12,7 @@
  *
  */
 
-const VERSION = '2.8.15'; // Version of this script
+const VERSION = '2.8.16'; // Version of this script
 if(!isset($_SERVER['REQUEST_TIME_FLOAT'])) {
     $_SERVER['REQUEST_TIME_FLOAT'] = microtime(true);
 }
@@ -261,7 +261,6 @@ class timthumb {
         if(! $mtime) return false;
 
         $etag = sprintf('"%s"', $mtime);
-        $this->debug(3, "The conditional get's etag unixtime is $iftime");
         if($etag===filter_input(INPUT_SERVER, 'HTTP_IF_NONE_MATCH')) {
             $this->debug(1, 'Returning 304 not modified');
             $this->debug(3, 'File has not been modified since last get, so serving a 304.');
