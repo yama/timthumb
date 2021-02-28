@@ -1190,7 +1190,10 @@ class timthumb {
 
     protected function loadConfig() {
         //Load a config file if it exists. Otherwise, use the values below
-        if( is_file(dirname(__FILE__) . '/timthumb-config.php'))    require_once('timthumb-config.php');
+        $path = sprintf('%s/%s-config.php', __DIR__, basename(__FILE__, '.php'));
+        if( is_file($path)) {
+            require_once($path);
+        }
     }
 }
 
