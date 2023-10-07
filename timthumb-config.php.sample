@@ -7,6 +7,8 @@
  * everytime you download a new version
 */
 
+// Please refer to the defaultConfig() method of the CONF class
+
 return [
     'debugOn'                    => false, // Enable debug logging to web server error log (STDERR)
     'debugLevel'                 => 1, // Debug level 1 is less noisy and 3 is the most noisy
@@ -14,6 +16,7 @@ return [
     'blockExternalLeechers'      => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
     'displayErrorMessages'       => true, // Display error messages. Set to false to turn off errors (good for production websites)
     'allowExternal'              => false, // Allow image fetching from external websites. Will check against `allowedSites` if `allowAllExternalSites` is false
+    'allowedSites'               => [],
     'allowAllExternalSites'      => false, // Less secure.
     'fileCacheEnabled'           => true, // Should we store resized/modified images on disk to speed things up?
     'fileCacheTimeBetweenCleans' => 60*60*24, // How often the cache is cleaned
@@ -56,5 +59,4 @@ return [
     'webshotPluginsOn'           => true, //Enable flash and other plugins
     'webshotProxy'               => '', //In case you're behind a proxy server.
     'webshotXvfbRunning'         => false, //ADVANCED: Enable this if you've got Xvfb running in the background.
-    'allowedSites' => [],
 ];

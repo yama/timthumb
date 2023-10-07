@@ -17,7 +17,8 @@ const VERSION = '2.8.16'; // Version of this script
 if (!isset($_SERVER['REQUEST_TIME_FLOAT'])) {
     $_SERVER['REQUEST_TIME_FLOAT'] = microtime(true);
 }
-timthumb::start();
+$timthumb = new timthumb();
+$timthumb->start();
 
 class timthumb
 {
@@ -25,143 +26,84 @@ class timthumb
     protected $is404           = false;
     protected $docRoot         = '';
     protected $lastURLError    = false;
-    protected $localImage      = '';
+    protected $localImagePath  = '';
     protected $localImageMTime = 0;
     protected $url             = false;
     protected $myHost          = '';
-    protected $isURL           = false;
-    protected $cachefile       = '';
+    protected $isExternalURL   = false;
+    protected $cachefilePath   = '';
     protected $errors          = [];
     protected $toDeletes       = [];
     protected $cacheDirectory  = '';
     protected $startTime       = 0;
     protected $lastBenchTime   = 0;
     protected $cropTop         = false;
-    protected $salt            = '';
     //Generally if timthumb.php is modifed (upgraded) then the salt changes and all cache files are recreated. This is a backup mechanism to force regen.
     protected $fileCacheVersion = 1;
     //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
     protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //";
     protected static $curlDataWritten = 0;
     protected static $curlFH = false;
-    protected $init_rs;
 
     public function __construct()
     {
         date_default_timezone_set('UTC');
         $this->debug(1, sprintf('Starting new request from %s to %s', $this->getIP(), serverv('REQUEST_URI')));
-        $this->calcDocRoot();
-        //On windows systems I'm assuming fileinode returns an empty string or a number that doesn't change. Check this.
-        $this->salt = @filemtime(__FILE__) . '-' . @fileinode(__FILE__);
-        $this->debug(3, 'Salt is: ' . $this->salt);
-        if (config('fileCacheDirectory')) {
-            if (!is_dir(config('fileCacheDirectory'))) {
-                @mkdir(config('fileCacheDirectory'));
-                if (!is_dir(config('fileCacheDirectory'))) {
-                    $this->error('Could not create the file cache directory.');
-                    $this->init_rs = false;
-                    return;
-                }
-            }
-            $this->cacheDirectory = config('fileCacheDirectory');
-            if (!touch($this->cacheDirectory . '/index.html')) {
-                $this->error('Could not create the index.html file - to fix this create an empty file named index.html file in the cache directory.');
-            }
-        } else {
-            $this->cacheDirectory = sys_get_temp_dir();
-        }
+        $this->docRoot = $this->calcDocRoot();
+        $this->cacheDirectory = $this->getCacheDirectory();
+
         //Clean the cache before we do anything because we don't want the first visitor after config('fileCacheTimeBetweenCleans') expires to get a stale image.
         $this->cleanCache();
 
         $this->myHost = preg_replace('@^www\.@i', '', serverv('HTTP_HOST'));
-        $this->src = getv('src');
-        $this->url = parse_url($this->src);
-        $this->src = preg_replace('@https?://(?:www\.)?' . $this->myHost . '@i', '', $this->src);
+        $this->url = parse_url(getv('src'));
+        $this->src = preg_replace('@https?://(?:www\.)?' . $this->myHost . '@i', '', getv('src'));
 
         if (strlen($this->src) <= 3) {
             $this->error('No image specified');
-            $this->init_rs = false;
             return;
         }
         if (config('blockExternalLeechers') && serverv('HTTP_REFERER')) {
-            $this->dispRedImage();
+            if (!$this->dispRedImage()) {
+                return false;
+            }
         }
         if (preg_match('@^https?://[^/]+@i', $this->src)) {
             $this->debug(2, 'Is a request for an external URL: ' . $this->src);
-            $this->isURL = true;
+            $this->isExternalURL = true;
+            if (!$this->isExternalImageAllowed()) {
+                return false;
+            }
         } else {
             $this->debug(2, 'Is a request for an internal file: ' . $this->src);
         }
-        if ($this->isURL && !config('allowExternal')) {
-            $this->error('You are not allowed to fetch images from an external website.');
-            $this->init_rs = false;
-            return;
-        }
-        if ($this->isURL) {
-            if (config('allowAllExternalSites')) {
-                $this->debug(2, 'Fetching from all external sites is enabled.');
-            } else {
-                $this->debug(2, 'Fetching only from selected external sites is enabled.');
-                $allowed = false;
-                foreach (config('allowedSites') as $site) {
-                    $hostLower = strtolower($this->url['host']);
-                    $siteLower = strtolower($site);
-                    // Check if $siteLower is a substring at the end of $hostLower
-                    $isSubString = strpos($hostLower, $siteLower) === strlen($hostLower) - strlen($siteLower);
-                    if ($isSubString || $hostLower == '.' . $siteLower) {
-                        $this->debug(3, sprintf('URL hostname %s matches %s so allowing.', $this->url['host'], $site));
-                        $allowed = true;
-                    }
-                }
-                if (!$allowed) {
-                    $this->error(
-                        sprintf(
-                            'You may not fetch images from that site. To enable this site in timthumb, you can either add it to $ALLOWED_SITES and set %s=true. Or you can set %s=true, depending on your security needs.',
-                            config('allowExternal'),
-                            config('allowAllExternalSites')
-                        )
-                    );
-                    $this->init_rs = false;
-                    return;
-                }
-            }
-        }
+        //On windows systems I'm assuming fileinode returns an empty string or a number that doesn't change. Check this.
+        $salt = @filemtime(__FILE__) . '-' . @fileinode(__FILE__);
+        $this->debug(3, 'Salt is: ' . $salt);
 
-        $cachePrefix = ($this->isURL ? '_ext_' : '_int_');
-        if ($this->isURL) {
+        if ($this->isExternalURL) {
             $arr = explode('&', serverv('QUERY_STRING'));
             asort($arr);
-            $this->cachefile = sprintf(
-                '%s/%s%s%s%s',
-                $this->cacheDirectory,
-                config('fileCachePrefix'),
-                $cachePrefix,
-                md5($this->salt . implode('', $arr) . $this->fileCacheVersion),
-                config('fileCacheSuffix')
+            $this->cachefilePath = $this->generateCacheFilePath(
+                $salt . implode('', $arr) . $this->fileCacheVersion
             );
-        } else {
-            $this->localImage = $this->getLocalImagePath($this->src);
-            if (!$this->localImage) {
-                $this->debug(1, 'Could not find the local image: ' . $this->localImage);
-                $this->error('Could not find the internal image you specified.');
-                $this->set404();
-                $this->init_rs = false;
-                return;
-            }
-            $this->debug(1, 'Local image path is ' . $this->localImage);
-            $this->localImageMTime = @filemtime($this->localImage);
-            //We include the mtime of the local file in case in changes on disk.
-            $this->cachefile = sprintf(
-                '%s/%s%s%s%s',
-                $this->cacheDirectory,
-                config('fileCachePrefix'),
-                $cachePrefix,
-                md5($this->salt . $this->localImageMTime . serverv('QUERY_STRING', '') . $this->fileCacheVersion),
-                config('fileCacheSuffix')
-            );
+            return;
         }
-        $this->debug(2, 'Cache file is: ' . $this->cachefile);
-        $this->init_rs = false;
+
+        $this->localImagePath = $this->getLocalImagePath($this->src);
+        if (!$this->localImagePath) {
+            $this->debug(1, 'Could not find the local image: ' . $this->localImagePath);
+            $this->error('Could not find the internal image you specified.');
+            $this->set404();
+            return;
+        }
+
+        $this->debug(1, 'Local image path is ' . $this->localImagePath);
+        $this->localImageMTime = @filemtime($this->localImagePath);
+        //We include the mtime of the local file in case in changes on disk.
+        $this->cachefilePath = $this->generateCacheFilePath(
+            $salt . $this->localImageMTime . serverv('QUERY_STRING', '') . $this->fileCacheVersion
+        );
     }
 
     public function __destruct()
@@ -172,27 +114,25 @@ class timthumb
         }
     }
 
-    public static function start()
+    public function start()
     {
-        $tim = new timthumb();
-        $tim->handleErrors();
-        $tim->securityChecks();
-        if ($tim->tryBrowserCache()) {
+        $this->handleErrors();
+        if ($this->tryBrowserCache()) {
             exit;
         }
-        $tim->handleErrors();
-        if (config('fileCacheEnabled') && $tim->tryServerCache()) {
+        $this->handleErrors();
+        if (config('fileCacheEnabled') && $this->tryServerCache()) {
             exit;
         }
-        $tim->handleErrors();
-        $tim->run();
-        $tim->handleErrors();
+        $this->handleErrors();
+        $this->run();
+        $this->handleErrors();
         exit;
     }
 
     public function run()
     {
-        if (!$this->isURL) {
+        if (!$this->isExternalURL) {
             $this->debug(3, 'Got request for internal image. Starting serveInternalImage()');
             $this->serveInternalImage();
             return true;
@@ -206,60 +146,142 @@ class timthumb
             return false;
         }
         $this->debug(3, 'Got request for external image. Starting serveExternalImage.');
-        if (!getv('webshot')) {
-            $this->debug(3, "webshot is NOT set so we're going to try to fetch a regular image.");
-            $this->serveExternalImage();
-            return true;
+
+        if (getv('webshot')) {
+            return $this->handleWebshot();
         }
 
-        if (!config('webshotEnabled')) {
-            $this->error(
-                'You added the webshot parameter but webshots are disabled on this server. You need to set "webshotEnabled" == true to enable webshots.'
-            );
+        $this->debug(3, "webshot is NOT set so we're going to try to fetch a regular image.");
+        $this->serveExternalImage();
+        return true;
+    }
+
+    private function generateCacheFilePath($seedString) {
+        $cachefilePath = sprintf(
+            '%s/%s%s%s%s',
+            $this->cacheDirectory,
+            config('fileCachePrefix'),
+            $this->isExternalURL ? '_ext_' : '_int_',
+            md5($seedString),
+            config('fileCacheSuffix')
+        );
+        $this->debug(2, 'Cache file is: ' . $cachefilePath);
+        return $cachefilePath;
+    }
+
+    private function isExternalImageAllowed() {
+        if (!config('allowExternal')) {
+            $this->error('You are not allowed to fetch images from an external website.');
             return false;
         }
 
-        $this->debug(3, "webshot param is set, so we're going to take a webshot.");
-        $this->serveWebshot();
+        if (!config('allowAllExternalSites')) {
+            $this->debug(2, 'Fetching only from selected external sites is enabled.');
+            $allowed = false;
+            foreach (config('allowedSites') as $site) {
+                $hostLower = strtolower($this->url['host']);
+                $siteLower = strtolower($site);
+                // Check if $siteLower is a substring at the end of $hostLower
+                $isSubString = strpos($hostLower, $siteLower) === strlen($hostLower) - strlen($siteLower);
+                if ($isSubString || $hostLower == '.' . $siteLower) {
+                    $this->debug(3, sprintf('URL hostname %s matches %s so allowing.', $this->url['host'], $site));
+                    $allowed = true;
+                }
+            }
+            if (!$allowed) {
+                $this->error(
+                    sprintf(
+                        'You may not fetch images from that site. To enable this site in timthumb, you can either add it to $ALLOWED_SITES and set %s=true. Or you can set %s=true, depending on your security needs.',
+                        config('allowExternal'),
+                        config('allowAllExternalSites')
+                    )
+                );
+                return false;
+            }
+        }
+
+        $this->debug(2, 'Fetching from all external sites is enabled.');
         return true;
+
     }
+
+    private function getCacheDirectory() {
+        if (!config('fileCacheDirectory')) {
+            return sys_get_temp_dir();
+        }
+
+        if (!is_dir(config('fileCacheDirectory'))) {
+            @mkdir(config('fileCacheDirectory'));
+            if (!is_dir(config('fileCacheDirectory'))) {
+                $this->error('Could not create the file cache directory.');
+                return false;
+            }
+        }
+
+        if (!touch(config('fileCacheDirectory') . '/index.html')) {
+            $this->error(
+                'Could not create the index.html file - to fix this create an empty file named index.html file in the cache directory.'
+            );
+            return false;
+        }
+        return config('fileCacheDirectory');
+    }
+
     protected function handleErrors()
     {
-        if ($this->haveErrors()) {
-            if (config('notFoundImage') && $this->is404()) {
-                if ($this->serveImg(config('notFoundImage'))) {
-                    exit;
-                }
-
-                $this->error('Additionally, the 404 image that is configured could not be found or there was an error serving it.');
-            }
-            if (config('errorImage')) {
-                if ($this->serveImg(config('errorImage'))) {
-                    exit;
-                }
-
-                $this->error('Additionally, the error image that is configured could not be found or there was an error serving it.');
-            }
-            $this->serveErrors();
-            exit;
+        if (!$this->errors) {
+            return false;
         }
-        return false;
+
+        if (config('notFoundImage') && $this->is404()) {
+            if ($this->serveImg(config('notFoundImage'))) {
+                exit;
+            }
+
+            $this->error('Additionally, the 404 image that is configured could not be found or there was an error serving it.');
+        }
+
+        if (config('errorImage')) {
+            if ($this->serveImg(config('errorImage'))) {
+                exit;
+            }
+
+            $this->error(
+                'Additionally, the error image that is configured could not be found or there was an error serving it.'
+            );
+        }
+
+        header(serverv('SERVER_PROTOCOL') . ' 400 Bad Request');
+        if (!config('displayErrorMessages')) {
+            return;
+        }
+        $html = '<ul>';
+        foreach ($this->errors as $err) {
+            $html .= '<li>' . htmlentities($err) . '</li>';
+        }
+        $html .= '</ul>';
+        echo '<h1>A TimThumb error has occured</h1>';
+        echo 'The following error(s) occured:<br />' . $html . '<br />';
+        echo '<br />Query String : ' . htmlentities(serverv('QUERY_STRING'), ENT_QUOTES);
+        echo '<br />TimThumb version : ' . VERSION . '</pre>';
+
+        exit;
     }
+
     protected function tryBrowserCache()
     {
-
         if (config('browserCacheDisable')) {
             $this->debug(3, 'Browser caching is disabled');
             return false;
         }
 
         //We've already checked if the real file exists in the constructor
-        if (!is_file($this->cachefile)) {
+        if (!is_file($this->cachefilePath)) {
             //If we don't have something cached, regenerate the cached image.
             return false;
         }
 
-        $mtime = @filemtime($this->cachefile);
+        $mtime = @filemtime($this->cachefilePath);
         $this->debug(3, sprintf("Cached file's modification time is %s", $mtime));
 
         if (!$mtime) return false;
@@ -275,23 +297,24 @@ class timthumb
         header(sprintf('ETag: %s', $etag));
         return false;
     }
+
     protected function tryServerCache()
     {
         $this->debug(3, 'Trying server cache');
-        if (!is_file($this->cachefile)) {
+        if (!is_file($this->cachefilePath)) {
             return false;
         }
 
-        $this->debug(3, sprintf('Cachefile %s exists', $this->cachefile));
-        if ($this->isURL) {
+        $this->debug(3, sprintf('Cachefile %s exists', $this->cachefilePath));
+        if ($this->isExternalURL) {
             $this->debug(
                 3,
                 'This is an external request, so checking if the cachefile is empty which means the request failed previously.'
             );
-            if (filesize($this->cachefile) < 1) {
+            if (filesize($this->cachefilePath) < 1) {
                 $this->debug(3, 'Found an empty cachefile indicating a failed earlier request. Checking how old it is.');
                 //Fetching error occured previously
-                if (now() - @filemtime($this->cachefile) > config('waitBetweenFetchErrors')) {
+                if (now() - @filemtime($this->cachefilePath) > config('waitBetweenFetchErrors')) {
                     $this->debug(
                         3,
                         sprintf(
@@ -299,7 +322,7 @@ class timthumb
                             config('waitBetweenFetchErrors')
                         )
                     );
-                    @unlink($this->cachefile);
+                    @unlink($this->cachefilePath);
                     return false; //to indicate we didn't serve from cache and app should try and load
                 }
 
@@ -311,20 +334,20 @@ class timthumb
         } else {
             $this->debug(3, sprintf(
                 'Trying to serve cachefile %s',
-                $this->cachefile
+                $this->cachefilePath
             ));
         }
         if ($this->serveCacheFile()) {
-            $this->debug(3, 'Succesfully served cachefile ' . $this->cachefile);
+            $this->debug(3, 'Succesfully served cachefile ' . $this->cachefilePath);
             return true;
         }
 
         $this->debug(
             3,
-            "Failed to serve cachefile " . $this->cachefile . " - Deleting it from cache."
+            "Failed to serve cachefile " . $this->cachefilePath . " - Deleting it from cache."
         );
         //Image serving failed. We can't retry at this point, but lets remove it from cache so the next request recreates it
-        @unlink($this->cachefile);
+        @unlink($this->cachefilePath);
         return true;
     }
 
@@ -334,33 +357,15 @@ class timthumb
         $this->errors[] = $err;
         return false;
     }
-    protected function haveErrors()
-    {
-        return count($this->errors) > 0;
-    }
-    protected function serveErrors()
-    {
-        header(serverv('SERVER_PROTOCOL') . ' 400 Bad Request');
-        if (!config('displayErrorMessages')) {
-            return;
-        }
-        $html = '<ul>';
-        foreach ($this->errors as $err) {
-            $html .= '<li>' . htmlentities($err) . '</li>';
-        }
-        $html .= '</ul>';
-        echo '<h1>A TimThumb error has occured</h1>The following error(s) occured:<br />' . $html . '<br />';
-        echo '<br />Query String : ' . htmlentities(serverv('QUERY_STRING'), ENT_QUOTES);
-        echo '<br />TimThumb version : ' . VERSION . '</pre>';
-    }
+
     protected function serveInternalImage()
     {
-        $this->debug(3, "Local image path is $this->localImage");
-        if (!$this->localImage) {
+        $this->debug(3, "Local image path is $this->localImagePath");
+        if (!$this->localImagePath) {
             $this->sanityFail("localImage not set after verifying it earlier in the code.");
             return false;
         }
-        $fileSize = filesize($this->localImage);
+        $fileSize = filesize($this->localImagePath);
         if ($fileSize > config('maxFileSize')) {
             $this->error("The file you specified is greater than the maximum allowed file size.");
             return false;
@@ -370,12 +375,12 @@ class timthumb
             return false;
         }
         $this->debug(3, "Calling processImageAndWriteToCache() for local image.");
-        if ($this->processImageAndWriteToCache($this->localImage)) {
-            $this->serveCacheFile();
-            return true;
+        if (!$this->processImageAndWriteToCache($this->localImagePath)) {
+            return false;
         }
 
-        return false;
+        $this->serveCacheFile();
+        return true;
     }
 
     protected function cleanCache()
@@ -383,6 +388,7 @@ class timthumb
         if (config('fileCacheTimeBetweenCleans') < 0) {
             return true;
         }
+
         $this->debug(3, "cleanCache() called");
         $lastCleanFile = $this->cacheDirectory . '/timthumb_cacheLastCleanTime.touch';
 
@@ -537,19 +543,18 @@ class timthumb
             $canvas_color = config('defaultCc'); // on error return default canvas color
         }
 
-        $canvas_color_R = hexdec(substr($canvas_color, 0, 2));
-        $canvas_color_G = hexdec(substr($canvas_color, 2, 2));
-        $canvas_color_B = hexdec(substr($canvas_color, 4, 2));
-
         // Create a new transparent color for image
         // If is a png and PNG_IS_TRANSPARENT is false then remove the alpha transparency
         // (and if is set a canvas color show it in the background)
-        if (preg_match('@^image/png$@i', $mimeType) && !config('pngIsTransparent') && $canvas_trans) {
-            $color = imagecolorallocatealpha($canvas, $canvas_color_R, $canvas_color_G, $canvas_color_B, 127);
-        } else {
-            $color = imagecolorallocatealpha($canvas, $canvas_color_R, $canvas_color_G, $canvas_color_B, 0);
-        }
-
+        $color = imagecolorallocatealpha(
+            $canvas,
+            hexdec(substr($canvas_color, 0, 2)),
+            hexdec(substr($canvas_color, 2, 2)),
+            hexdec(substr($canvas_color, 4, 2)),
+            ($mimeType === 'image/png' && !config('pngIsTransparent') && $canvas_trans)
+                ? 127
+                : 0
+        );
 
         // Completely fill the background of the new image with allocated color.
         imagefill($canvas, 0, 0, $color);
@@ -560,15 +565,11 @@ class timthumb
             $final_height = $height * ($new_width / $width);
 
             if ($final_height > $new_height) {
-
-                $origin_x = $new_width / 2;
                 $new_width = $width * ($new_height / $height);
-                $origin_x = round($origin_x - ($new_width / 2));
+                $origin_x = round(($new_width / 2) - ($new_width / 2));
             } else {
-
-                $origin_y = $new_height / 2;
                 $new_height = $final_height;
-                $origin_y = round($origin_y - ($new_height / 2));
+                $origin_y = round(($new_height / 2) - ($new_height / 2));
             }
         }
 
@@ -586,11 +587,9 @@ class timthumb
 
             // calculate x or y coordinate and width or height of source
             if ($cmp_x > $cmp_y) {
-
                 $src_w = round($width / $cmp_x * $cmp_y);
                 $src_x = round(($width - ($width / $cmp_x * $cmp_y)) / 2);
             } elseif ($cmp_y > $cmp_x) {
-
                 $src_h = round($height / $cmp_y * $cmp_x);
                 $src_y = round(($height - ($height / $cmp_y * $cmp_x)) / 2);
             }
@@ -758,15 +757,15 @@ class timthumb
         fclose($fp);
         @unlink($tempfile);
         $this->debug(3, "Locking and replacing cache file.");
-        $lockFile = $this->cachefile . '.lock';
+        $lockFile = $this->cachefilePath . '.lock';
         $fh = fopen($lockFile, 'w');
         if (!$fh) {
             @unlink($tempfile4);
             return $this->error("Could not open the lockfile for writing an image.");
         }
         if (flock($fh, LOCK_EX)) {
-            @unlink($this->cachefile); //rename generally overwrites, but doing this in case of platform specific quirks. File might not exist yet.
-            rename($tempfile4, $this->cachefile);
+            @unlink($this->cachefilePath); //rename generally overwrites, but doing this in case of platform specific quirks. File might not exist yet.
+            rename($tempfile4, $this->cachefilePath);
             flock($fh, LOCK_UN);
             fclose($fh);
             @unlink($lockFile);
@@ -810,7 +809,7 @@ class timthumb
             $docRoot = rtrim($docRoot, '/');
         }
         $this->debug(3, "Doc root is: " . $docRoot);
-        $this->docRoot = $docRoot;
+        return $docRoot;
     }
     protected function getLocalImagePath($src)
     {
@@ -906,10 +905,19 @@ class timthumb
         $this->toDeletes[] = $name;
     }
 
-    protected function serveWebshot()
+    protected function handleWebshot()
     {
-        $this->debug(3, "Starting serveWebshot");
-        $instr = "Please follow the instructions at http://code.google.com/p/timthumb/ to set your server up for taking website screenshots.";
+        if (!config('webshotEnabled')) {
+            $this->error(
+                'You added the webshot parameter but webshots are disabled on this server. You need to set "webshotEnabled" == true to enable webshots.'
+            );
+            return false;
+        }
+
+        $this->debug(3, "webshot param is set, so we're going to take a webshot.");
+
+        $this->debug(3, "Starting handleWebshot");
+        $instr = "Please follow the instructions at https://code.google.com/p/timthumb/ to set your server up for taking website screenshots.";
         if (!is_file(config('webshotCutycapt'))) {
             return $this->error("CutyCapt is not installed. $instr");
         }
@@ -981,12 +989,12 @@ class timthumb
             return $this->error("The command to create a thumbnail failed.");
         }
         $this->cropTop = true;
-        if ($this->processImageAndWriteToCache($tempfile)) {
-            $this->debug(3, "Image processed succesfully. Serving from cache");
-            return $this->serveCacheFile();
+        if (!$this->processImageAndWriteToCache($tempfile)) {
+            return false;
         }
 
-        return false;
+        $this->debug(3, "Image processed succesfully. Serving from cache");
+        return $this->serveCacheFile();
     }
 
     protected function serveExternalImage()
@@ -1000,8 +1008,8 @@ class timthumb
         $this->toDelete($tempfile);
         #fetch file here
         if (!$this->getURL($this->src, $tempfile)) {
-            @unlink($this->cachefile);
-            touch($this->cachefile);
+            @unlink($this->cachefilePath);
+            touch($this->cachefilePath);
             $this->debug(3, "Error fetching URL: " . $this->lastURLError);
             $this->error("Error reading the URL you specified from remote host." . $this->lastURLError);
             return false;
@@ -1010,8 +1018,8 @@ class timthumb
         $mimeType = $this->getMimeType($tempfile);
         if (!preg_match("@^image/(?:jpg|jpeg|gif|png)$@i", $mimeType)) {
             $this->debug(3, "Remote file has invalid mime type: $mimeType");
-            @unlink($this->cachefile);
-            touch($this->cachefile);
+            @unlink($this->cachefilePath);
+            touch($this->cachefilePath);
             $this->error("The remote file is not a valid image. Mimetype = '" . $mimeType . "'" . $tempfile);
             return false;
         }
@@ -1035,12 +1043,12 @@ class timthumb
     }
     protected function serveCacheFile()
     {
-        $this->debug(3, "Serving {$this->cachefile}");
-        if (!is_file($this->cachefile)) {
+        $this->debug(3, "Serving {$this->cachefilePath}");
+        if (!is_file($this->cachefilePath)) {
             $this->error("serveCacheFile called in timthumb but we couldn't find the cached file.");
             return false;
         }
-        $fp = fopen($this->cachefile, 'rb');
+        $fp = fopen($this->cachefilePath, 'rb');
         if (!$fp) {
             return $this->error("Could not open cachefile.");
         }
@@ -1048,17 +1056,17 @@ class timthumb
         $imgType = fread($fp, 3);
         fseek($fp, 3, SEEK_CUR);
         if (ftell($fp) != strlen($this->filePrependSecurityBlock) + 6) {
-            @unlink($this->cachefile);
+            @unlink($this->cachefilePath);
             return $this->error("The cached image file seems to be corrupt.");
         }
-        $imageDataSize = filesize($this->cachefile) - (strlen($this->filePrependSecurityBlock) + 6);
+        $imageDataSize = filesize($this->cachefilePath) - (strlen($this->filePrependSecurityBlock) + 6);
         $this->sendImageHeaders($imgType, $imageDataSize);
         $bytesSent = @fpassthru($fp);
         fclose($fp);
         if ($bytesSent > 0) {
             return true;
         }
-        $content = file_get_contents($this->cachefile);
+        $content = file_get_contents($this->cachefilePath);
         if ($content != false) {
             $content = substr($content, strlen($this->filePrependSecurityBlock) + 6);
             echo $content;
@@ -1083,7 +1091,7 @@ class timthumb
         header('Content-Type: ' . $mimeType);
         header('Accept-Ranges: none'); //Changed this because we don't accept range requests
         header('Content-Length: ' . $dataSize);
-        $etag = '"' . filemtime($this->cachefile) . '"';
+        $etag = '"' . filemtime($this->cachefilePath) . '"';
         header(sprintf('ETag: %s', $etag));
         if (config('browserCacheDisable')) {
             $this->debug(3, "Browser cache is disabled so setting non-caching headers.");
@@ -1097,9 +1105,7 @@ class timthumb
         }
         return true;
     }
-    protected function securityChecks()
-    {
-    }
+
     protected function openImage($mimeType, $src)
     {
         switch ($mimeType) {
@@ -1320,66 +1326,64 @@ class timthumb
 
 class CONF
 {
+    public static $default = [
+        'debugOn'                    => false, // Enable debug logging to web server error log (STDERR)
+        'debugLevel'                 => 1, // Debug level 1 is less noisy and 3 is the most noisy
+        'memoryLimit'                => '30M', // Set PHP memory limit
+        'blockExternalLeechers'      => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
+        'displayErrorMessages'       => true, // Display error messages. Set to false to turn off errors (good for production websites)
+        'allowExternal'              => false, // Allow image fetching from external websites. Will check against `allowedSites` if `allowAllExternalSites` is false
+        'allowedSites'               => [],
+        'allowAllExternalSites'      => false, // Less secure.
+        'fileCacheEnabled'           => true, // Should we store resized/modified images on disk to speed things up?
+        'fileCacheTimeBetweenCleans' => 60*60*24, // How often the cache is cleaned
+        'fileCacheMaxFileAge'        => 60*60*24, // How old does a file have to be to be deleted from the cache
+        'fileCacheSuffix'            => '.cache', // What to put at the end of all files in the cache directory so we can identify them
+        'fileCachePrefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
+        'fileCacheDirectory'         => './cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
+        'maxFileSize'                => 15728640, // 15 Megs is 10485760. This is the max internal or external file size that we'll process.
+        'curlTimeout'                => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
+        'waitBetweenFetchErrors'     => 3600, // Time to wait between errors fetching remote file
+        'browserCacheMaxAge'         => 60*60*24*10, // Time to cache in the browser
+        'browserCacheDisable'        => false, // Use for testing if you want to disable all browser caching
+        'maxWidth'                   => 1920, // Maximum image width
+        'maxHeight'                  => 1920, // Maximum image height
+        'notFoundImage'              => '', // Image to serve if any 404 occurs
+        'errorImage'                 => '', // Image to serve if an error occurs instead of showing error message
+        'pngIsTransparent'           => false, // Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
+        'defaultQ'                   => 90, // Default image quality.
+        'defaultZc'                  => 1, // Default zoom/crop setting.
+        'defaultF'                   => '', // Default image filters.
+        'defaultS'                   => 0, // Default sharpen value.
+        'defaultCc'                  => 'ffffff', // Default canvas colour.
+        'defaultWidth'               => 100, // Default thumbnail width.
+        'defaultHeight'              => 100, // Default thumbnail height.
+        'optipngEnabled'             => false,
+        'optipngPath'                => '/usr/bin/optipng', //This will run first because it gives better compression than pngcrush.
+        'pngcrushEnabled'            => false,
+        'pngcrushPath'               => '/usr/bin/pngcrush', //This will only run if `optipngPath` is not set or is not valid
+        'webshotEnabled'             => false, //Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
+        'webshotCutyCapt'            => '/usr/local/bin/CutyCapt', //The path to CutyCapt.
+        'webshotXvfb'                => '/usr/bin/xvfb-run', //The path to the Xvfb server
+        'webshotScreenX'             => '1024', //1024 works ok
+        'webshotScreenY'             => '768', //768 works ok
+        'webshotColorDepth'          => '24', //I haven't tested anything besides 24
+        'webshotImageFormat'         => 'png', //png is about 2.5 times the size of jpg but is a LOT better quality
+        'webshotTimeout'             => '20', //Seconds to wait for a webshot
+        'webshotUserAgent'           => "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0", //I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
+        'webshotJavascriptOn'        => true, //Setting to false might give you a slight speedup and block ads. But it could cause other issues.
+        'webshotJavaOn'              => false, //Have only tested this as fase
+        'webshotPluginsOn'           => true, //Enable flash and other plugins
+        'webshotProxy'               => '', //In case you're behind a proxy server.
+        'webshotXvfbRunning'         => false, //ADVANCED: Enable this if you've got Xvfb running in the background.
+    ];
+
     public static function get() {
         $path = sprintf('%s/%s-config.php', __DIR__, basename(__FILE__, '.php'));
-        if (is_file($path)) {
-            return array_merge(self::defaultConfig(), include $path);
+        if (is_file($path) && $customConfig = include $path) {
+            return array_merge(self::$default, $customConfig);
         }
         return self::defaultConfig();
-    }
-
-    private static function defaultConfig() {
-        return [
-            'debugOn'                    => false, // Enable debug logging to web server error log (STDERR)
-            'debugLevel'                 => 1, // Debug level 1 is less noisy and 3 is the most noisy
-            'memoryLimit'                => '30M', // Set PHP memory limit
-            'blockExternalLeechers'      => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
-            'displayErrorMessages'       => true, // Display error messages. Set to false to turn off errors (good for production websites)
-            'allowExternal'              => false, // Allow image fetching from external websites. Will check against `allowedSites` if `allowAllExternalSites` is false
-            'allowAllExternalSites'      => false, // Less secure.
-            'fileCacheEnabled'           => true, // Should we store resized/modified images on disk to speed things up?
-            'fileCacheTimeBetweenCleans' => 60*60*24, // How often the cache is cleaned
-            'fileCacheMaxFileAge'        => 60*60*24, // How old does a file have to be to be deleted from the cache
-            'fileCacheSuffix'            => '.cache', // What to put at the end of all files in the cache directory so we can identify them
-            'fileCachePrefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
-            'fileCacheDirectory'         => './cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
-            'maxFileSize'                => 15728640, // 10 Megs is 10485760. This is the max internal or external file size that we'll process.
-            'curlTimeout'                => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
-            'waitBetweenFetchErrors'     => 3600, // Time to wait between errors fetching remote file
-            'browserCacheMaxAge'         => 60*60*24*10, // Time to cache in the browser
-            'browserCacheDisable'        => false, // Use for testing if you want to disable all browser caching
-            'maxWidth'                   => 1920, // Maximum image width
-            'maxHeight'                  => 1920, // Maximum image height
-            'notFoundImage'              => '', // Image to serve if any 404 occurs
-            'errorImage'                 => '', // Image to serve if an error occurs instead of showing error message
-            'pngIsTransparent'           => false, // Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
-            'defaultQ'                   => 90, // Default image quality.
-            'defaultZc'                  => 1, // Default zoom/crop setting.
-            'defaultF'                   => '', // Default image filters.
-            'defaultS'                   => 0, // Default sharpen value.
-            'defaultCc'                  => 'ffffff', // Default canvas colour.
-            'defaultWidth'               => 100, // Default thumbnail width.
-            'defaultHeight'              => 100, // Default thumbnail height.
-            'optipngEnabled'             => false,
-            'optipngPath'                => '/usr/bin/optipng', //This will run first because it gives better compression than pngcrush.
-            'pngcrushEnabled'            => false,
-            'pngcrushPath'               => '/usr/bin/pngcrush', //This will only run if `optipngPath` is not set or is not valid
-            'webshotEnabled'             => false, //Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
-            'webshotCutyCapt'            => '/usr/local/bin/CutyCapt', //The path to CutyCapt.
-            'webshotXvfb'                => '/usr/bin/xvfb-run', //The path to the Xvfb server
-            'webshotScreenX'             => '1024', //1024 works ok
-            'webshotScreenY'             => '768', //768 works ok
-            'webshotColorDepth'          => '24', //I haven't tested anything besides 24
-            'webshotImageFormat'         => 'png', //png is about 2.5 times the size of jpg but is a LOT better quality
-            'webshotTimeout'             => '20', //Seconds to wait for a webshot
-            'webshotUserAgent'           => "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0", //I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
-            'webshotJavascriptOn'        => true, //Setting to false might give you a slight speedup and block ads. But it could cause other issues.
-            'webshotJavaOn'              => false, //Have only tested this as fase
-            'webshotPluginsOn'           => true, //Enable flash and other plugins
-            'webshotProxy'               => '', //In case you're behind a proxy server.
-            'webshotXvfbRunning'         => false, //ADVANCED: Enable this if you've got Xvfb running in the background.
-            'allowedSites' => [],
-        ];
     }
 }
 
