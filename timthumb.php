@@ -1387,15 +1387,20 @@ class CONF
     }
 }
 
-function config($key, $default=null) {
+function config($key, $default = null) {
     static $config = null;
     if ($config === null) {
         $config = CONF::get();
     }
-    if (isset($config[$key])) {
-        return $config[$key];
+    $keys = explode('.', $key);
+    $value = $config;
+    foreach ($keys as $subkey) {
+        if (!isset($value[$subkey])) {
+            return $default;
+        }
+        $value = $value[$subkey];
     }
-    return $default;
+    return $value;
 }
 
 function getv($key, $default = '')
