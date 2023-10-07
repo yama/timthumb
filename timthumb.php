@@ -52,7 +52,7 @@ class timthumb
         $this->docRoot = $this->calcDocRoot();
         $this->cacheDirectory = $this->getCacheDirectory();
 
-        //Clean the cache before we do anything because we don't want the first visitor after config('fileCacheTimeBetweenCleans') expires to get a stale image.
+        //Clean the cache before we do anything because we don't want the first visitor after config('fileCache.timeBetweenCleans') expires to get a stale image.
         $this->cleanCache();
 
         $this->myHost = preg_replace('@^www\.@i', '', serverv('HTTP_HOST'));
@@ -121,7 +121,7 @@ class timthumb
             exit;
         }
         $this->handleErrors();
-        if (config('fileCacheEnabled') && $this->tryServerCache()) {
+        if (config('fileCache.enabled') && $this->tryServerCache()) {
             exit;
         }
         $this->handleErrors();
@@ -160,10 +160,10 @@ class timthumb
         $cachefilePath = sprintf(
             '%s/%s%s%s%s',
             $this->cacheDirectory,
-            config('fileCachePrefix'),
+            config('fileCache.prefix'),
             $this->isExternalURL ? '_ext_' : '_int_',
             md5($seedString),
-            config('fileCacheSuffix')
+            config('fileCache.suffix')
         );
         $this->debug(2, 'Cache file is: ' . $cachefilePath);
         return $cachefilePath;
@@ -206,25 +206,25 @@ class timthumb
     }
 
     private function getCacheDirectory() {
-        if (!config('fileCacheDirectory')) {
+        if (!config('fileCache.directory')) {
             return sys_get_temp_dir();
         }
 
-        if (!is_dir(config('fileCacheDirectory'))) {
-            @mkdir(config('fileCacheDirectory'));
-            if (!is_dir(config('fileCacheDirectory'))) {
+        if (!is_dir(config('fileCache.directory'))) {
+            @mkdir(config('fileCache.directory'));
+            if (!is_dir(config('fileCache.directory'))) {
                 $this->error('Could not create the file cache directory.');
                 return false;
             }
         }
 
-        if (!touch(config('fileCacheDirectory') . '/index.html')) {
+        if (!touch(config('fileCache.directory') . '/index.html')) {
             $this->error(
                 'Could not create the index.html file - to fix this create an empty file named index.html file in the cache directory.'
             );
             return false;
         }
-        return config('fileCacheDirectory');
+        return config('fileCache.directory');
     }
 
     protected function handleErrors()
@@ -385,7 +385,7 @@ class timthumb
 
     protected function cleanCache()
     {
-        if (config('fileCacheTimeBetweenCleans') < 0) {
+        if (config('fileCache.timeBetweenCleans') < 0) {
             return true;
         }
 
@@ -401,28 +401,28 @@ class timthumb
             return false;
         }
         //Cache was last cleaned more than 1 day ago
-        if (@filemtime($lastCleanFile) < (now() - config('fileCacheTimeBetweenCleans'))) {
+        if (@filemtime($lastCleanFile) < (now() - config('fileCache.timeBetweenCleans'))) {
             $this->debug(
                 1,
                 sprintf(
                     "Cache was last cleaned more than %d seconds ago. Cleaning now.",
-                    config('fileCacheTimeBetweenCleans')
+                    config('fileCache.timeBetweenCleans')
                 )
             );
             // Very slight race condition here, but worst case we'll have 2 or 3 servers cleaning the cache simultaneously once a day.
             if (!touch($lastCleanFile)) {
                 $this->error("Could not create cache clean timestamp file.");
             }
-            $files = glob($this->cacheDirectory . '/*' . config('fileCacheSuffix'));
+            $files = glob($this->cacheDirectory . '/*' . config('fileCache.suffix'));
             if ($files) {
-                $timeAgo = now() - config('fileCacheMaxFileAge');
+                $timeAgo = now() - config('fileCache.maxFileAge');
                 foreach ($files as $file) {
                     if (@filemtime($file) < $timeAgo) {
                         $this->debug(
                             3,
                             sprintf(
                                 "Deleting cache file $file older than max age: %d seconds",
-                                config('fileCacheMaxFileAge')
+                                config('fileCache.maxFileAge')
                             )
                         );
                         @unlink($file);
@@ -432,7 +432,7 @@ class timthumb
             return true;
         }
 
-        $this->debug(3, "Cache was cleaned less than " . config('fileCacheTimeBetweenCleans') . " seconds ago so no cleaning needed.");
+        $this->debug(3, "Cache was cleaned less than " . config('fileCache.timeBetweenCleans') . " seconds ago so no cleaning needed.");
         return false;
     }
     protected function processImageAndWriteToCache($localImage)
@@ -473,21 +473,21 @@ class timthumb
         // get standard input properties
         $new_width =  (int) abs(getv('w', 0));
         $new_height = (int) abs(getv('h', 0));
-        $zoom_crop = (int) getv('zc', config('defaultZc'));
-        $quality = (int) abs(getv('q', config('defaultQ')));
+        $zoom_crop = (int) getv('zc', config('default.zc'));
+        $quality = (int) abs(getv('q', config('default.q')));
         $align = $this->cropTop ? 't' : getv('a', 'c');
-        $filters = getv('f', config('defaultF'));
-        $sharpen = (bool) getv('s', config('defaultS'));
+        $filters = getv('f', config('default.f'));
+        $sharpen = (bool) getv('s', config('default.s'));
         $canvas_color = ltrim(
-            getv('cc', config('defaultCc')),
+            getv('cc', config('default.cc')),
             '#'
         );
         $canvas_trans = (bool) getv('ct', '1');
 
         // set default width and height if neither are set already
         if ($new_width == 0 && $new_height == 0) {
-            $new_width = (int) config('defaultWidth');
-            $new_height = (int) config('defaultHeight');
+            $new_width = (int) config('default.width');
+            $new_height = (int) config('default.height');
         }
 
         // ensure size limits can not be abused
@@ -540,7 +540,7 @@ class timthumb
                 str_repeat(substr($canvas_color, 2, 1), 2)
             );
         } elseif (strlen($canvas_color) != 6) {
-            $canvas_color = config('defaultCc'); // on error return default canvas color
+            $canvas_color = config('default.cc'); // on error return default canvas color
         }
 
         // Create a new transparent color for image
@@ -551,7 +551,7 @@ class timthumb
             hexdec(substr($canvas_color, 0, 2)),
             hexdec(substr($canvas_color, 2, 2)),
             hexdec(substr($canvas_color, 4, 2)),
-            ($mimeType === 'image/png' && !config('pngIsTransparent') && $canvas_trans)
+            ($mimeType === 'image/png' && !config('png.isTransparent') && $canvas_trans)
                 ? 127
                 : 0
         );
@@ -705,8 +705,8 @@ class timthumb
             return $this->sanityFail("Could not match mime type after verifying it previously.");
         }
 
-        if ($imgType === 'png' && config('optipngEnabled') && config('optipngPath') && @is_file(config('optipngPath'))) {
-            $exec = config('optipngPath');
+        if ($imgType === 'png' && config('png.optipngEnabled') && config('png.optipngPath') && @is_file(config('png.optipngPath'))) {
+            $exec = config('png.optipngPath');
             $this->debug(3, "optipng'ing $tempfile");
             $out = `$exec -o1 $tempfile`; //you can use up to -o7 but it really slows things down
             clearstatcache();
@@ -719,8 +719,8 @@ class timthumb
             } else {
                 $this->debug(1, "optipng did not change image size.");
             }
-        } elseif ($imgType === 'png' && config('pngcrushEnabled') && config('pngcrushPath') && @is_file(config('pngcrushPath'))) {
-            $exec = config('pngcrushPath');
+        } elseif ($imgType === 'png' && config('png.pngcrushEnabled') && config('png.pngcrushPath') && @is_file(config('png.pngcrushPath'))) {
+            $exec = config('png.pngcrushPath');
             $tempfile2 = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
             $this->debug(3, "pngcrush'ing $tempfile to $tempfile2");
             $out = `$exec $tempfile $tempfile2`;
@@ -907,7 +907,7 @@ class timthumb
 
     protected function handleWebshot()
     {
-        if (!config('webshotEnabled')) {
+        if (!config('webshot.enabled')) {
             $this->error(
                 'You added the webshot parameter but webshots are disabled on this server. You need to set "webshotEnabled" == true to enable webshots.'
             );
@@ -918,36 +918,36 @@ class timthumb
 
         $this->debug(3, "Starting handleWebshot");
         $instr = "Please follow the instructions at https://code.google.com/p/timthumb/ to set your server up for taking website screenshots.";
-        if (!is_file(config('webshotCutycapt'))) {
+        if (!is_file(config('webshot.cutycapt'))) {
             return $this->error("CutyCapt is not installed. $instr");
         }
-        if (!is_file(config('webshotXvfb'))) {
+        if (!is_file(config('webshot.xvfb'))) {
             return $this->Error("Xvfb is not installed. $instr");
         }
         if (!preg_match('@^https?://[a-zA-Z0-9.\-]+@i', $this->src)) {
             return $this->error("Invalid URL supplied.");
         }
-        $cuty = config('webshotCutycapt');
-        $xv = config('webshotXvfb');
-        $screenX = config('webshotScreenX');
-        $screenY = config('webshotScreenY');
-        $colDepth = config('webshotColorDepth');
-        $format = config('webshotImageFormat');
-        $timeout = config('webshotTimeout') * 1000;
-        $ua = config('webshotUserAgent');
-        $jsOn = config('webshotJavascriptOn') ? 'on' : 'off';
-        $javaOn = config('webshotJavaOn') ? 'on' : 'off';
-        $pluginsOn = config('webshotPluginsOn') ? 'on' : 'off';
-        $proxy = config('webshotProxy') ? ' --http-proxy=' . config('webshotProxy') : '';
-        $tempfile = tempnam($this->cacheDirectory, 'timthumb_webshot');
-        $url = $this->src;
-        $url = preg_replace('@[^A-Za-z0-9\-._:/?&+;=]+@', '', $url); //RFC 3986 plus ()$ chars to prevent exploit below. Plus the following are also removed: @*!~#[]',
+        $cuty      = config('webshot.cutycapt');
+        $xv        = config('webshot.xvfb');
+        $screenX   = config('webshot.screenX');
+        $screenY   = config('webshot.screenY');
+        $colDepth  = config('webshot.colorDepth');
+        $format    = config('webshot.imageFormat');
+        $timeout   = config('webshot.timeout') * 1000;
+        $ua        = config('webshot.userAgent');
+        $jsOn      = config('webshot.javascriptOn') ? 'on' : 'off';
+        $javaOn    = config('webshot.javaOn') ? 'on' : 'off';
+        $pluginsOn = config('webshot.pluginsOn') ? 'on' : 'off';
+        $proxy     = config('webshot.proxy') ? ' --http-proxy=' . config('webshot.proxy') : '';
+        $tempfile  = tempnam($this->cacheDirectory, 'timthumb_webshot');
+        $url       = $this->src;
+        $url       = preg_replace('@[^A-Za-z0-9\-._:/?&+;=]+@', '', $url); //RFC 3986 plus ()$ chars to prevent exploit below. Plus the following are also removed: @*!~#[]',
         // 2014 update by Mark Maunder: This exploit: http://cxsecurity.com/issue/WLB-2014060134
         // uses the $(command) shell execution syntax to execute arbitrary shell commands as the web server user.
         // So we're now filtering out the characters: '$', '(' and ')' in the above regex to avoid this.
         // We are also filtering out chars rarely used in URLs but legal accoring to the URL RFC which might be exploitable. These include: @*!~#[]',
         // We're doing this because we're passing this URL to the shell and need to make very sure it's not going to execute arbitrary commands.
-        if (config('webshotXvfbRunning')) {
+        if (config('webshot.xvfbRunning')) {
             putenv('DISPLAY=:100.0');
             $command = sprintf(
                 '%s %s --max-wait=%d --user-agent="%s" --javascript=%s --java=%s --plugins=%s --js-can-open-windows=off --url="%s" --out-format=%s --out=%s',
@@ -1327,63 +1327,82 @@ class timthumb
 class CONF
 {
     public static $default = [
-        'debugOn'                    => false, // Enable debug logging to web server error log (STDERR)
-        'debugLevel'                 => 1, // Debug level 1 is less noisy and 3 is the most noisy
-        'memoryLimit'                => '30M', // Set PHP memory limit
-        'blockExternalLeechers'      => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
-        'displayErrorMessages'       => true, // Display error messages. Set to false to turn off errors (good for production websites)
-        'allowExternal'              => false, // Allow image fetching from external websites. Will check against `allowedSites` if `allowAllExternalSites` is false
-        'allowedSites'               => [],
-        'allowAllExternalSites'      => false, // Less secure.
-        'fileCacheEnabled'           => true, // Should we store resized/modified images on disk to speed things up?
-        'fileCacheTimeBetweenCleans' => 60*60*24, // How often the cache is cleaned
-        'fileCacheMaxFileAge'        => 60*60*24, // How old does a file have to be to be deleted from the cache
-        'fileCacheSuffix'            => '.cache', // What to put at the end of all files in the cache directory so we can identify them
-        'fileCachePrefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
-        'fileCacheDirectory'         => './cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
-        'maxFileSize'                => 15728640, // 15 Megs is 10485760. This is the max internal or external file size that we'll process.
-        'curlTimeout'                => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
-        'waitBetweenFetchErrors'     => 3600, // Time to wait between errors fetching remote file
-        'browserCacheMaxAge'         => 60*60*24*10, // Time to cache in the browser
-        'browserCacheDisable'        => false, // Use for testing if you want to disable all browser caching
-        'maxWidth'                   => 1920, // Maximum image width
-        'maxHeight'                  => 1920, // Maximum image height
-        'notFoundImage'              => '', // Image to serve if any 404 occurs
-        'errorImage'                 => '', // Image to serve if an error occurs instead of showing error message
-        'pngIsTransparent'           => false, // Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
-        'defaultQ'                   => 90, // Default image quality.
-        'defaultZc'                  => 1, // Default zoom/crop setting.
-        'defaultF'                   => '', // Default image filters.
-        'defaultS'                   => 0, // Default sharpen value.
-        'defaultCc'                  => 'ffffff', // Default canvas colour.
-        'defaultWidth'               => 100, // Default thumbnail width.
-        'defaultHeight'              => 100, // Default thumbnail height.
-        'optipngEnabled'             => false,
-        'optipngPath'                => '/usr/bin/optipng', //This will run first because it gives better compression than pngcrush.
-        'pngcrushEnabled'            => false,
-        'pngcrushPath'               => '/usr/bin/pngcrush', //This will only run if `optipngPath` is not set or is not valid
-        'webshotEnabled'             => false, //Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
-        'webshotCutyCapt'            => '/usr/local/bin/CutyCapt', //The path to CutyCapt.
-        'webshotXvfb'                => '/usr/bin/xvfb-run', //The path to the Xvfb server
-        'webshotScreenX'             => '1024', //1024 works ok
-        'webshotScreenY'             => '768', //768 works ok
-        'webshotColorDepth'          => '24', //I haven't tested anything besides 24
-        'webshotImageFormat'         => 'png', //png is about 2.5 times the size of jpg but is a LOT better quality
-        'webshotTimeout'             => '20', //Seconds to wait for a webshot
-        'webshotUserAgent'           => "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0", //I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
-        'webshotJavascriptOn'        => true, //Setting to false might give you a slight speedup and block ads. But it could cause other issues.
-        'webshotJavaOn'              => false, //Have only tested this as fase
-        'webshotPluginsOn'           => true, //Enable flash and other plugins
-        'webshotProxy'               => '', //In case you're behind a proxy server.
-        'webshotXvfbRunning'         => false, //ADVANCED: Enable this if you've got Xvfb running in the background.
+        'debugOn'                => false, // Enable debug logging to web server error log (STDERR)
+        'debugLevel'             => 1, // Debug level 1 is less noisy and 3 is the most noisy
+        'memoryLimit'            => '30M', // Set PHP memory limit
+        'maxFileSize'            => 15728640, // 15 Megs is 10485760. This is the max internal or external file size that we'll process.
+        'curlTimeout'            => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
+        'waitBetweenFetchErrors' => 3600, // Time to wait between errors fetching remote file
+        'browserCacheMaxAge'     => 60*60*24*10, // Time to cache in the browser
+        'browserCacheDisable'    => false, // Use for testing if you want to disable all browser caching
+        'blockExternalLeechers'  => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
+        'displayErrorMessages'   => true, // Display error messages. Set to false to turn off errors (good for production websites)
+        'maxWidth'      => 1920, // Maximum image width
+        'maxHeight'     => 1920, // Maximum image height
+        'notFoundImage' => '', // Image to serve if any 404 occurs
+        'errorImage'    => '', // Image to serve if an error occurs instead of showing error message
+        'allowExternal'          => false, // Allow image fetching from external websites. Will check against `allowedSites` if `allowAllExternalSites` is false
+        'allowedSites'           => [],
+        'allowAllExternalSites'  => false, // Less secure.
+        'fileCache' => [
+            'enabled'           => true, // Should we store resized/modified images on disk to speed things up?
+            'timeBetweenCleans' => 60*60*24, // How often the cache is cleaned
+            'maxFileAge'        => 60*60*24, // How old does a file have to be to be deleted from the cache
+            'suffix'            => '.cache', // What to put at the end of all files in the cache directory so we can identify them
+            'prefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
+            'directory'         => './cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
+        ],
+        'default' => [
+            'q'      => 90, // Default image quality.
+            'zc'     => 1, // Default zoom/crop setting.
+            'f'      => '', // Default image filters.
+            's'      => 0, // Default sharpen value.
+            'cc'     => 'ffffff', // Default canvas colour.
+            'width'  => 100, // Default thumbnail width.
+            'height' => 100, // Default thumbnail height.
+        ],
+        'png' => [
+            'isTransparent'   => false, // Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
+            'optipngEnabled'  => false,
+            'optipngPath'     => '/usr/bin/optipng', //This will run first because it gives better compression than pngcrush.
+            'pngcrushEnabled' => false,
+            'pngcrushPath'    => '/usr/bin/pngcrush', //This will only run if `png.optipngPath` is not set or is not valid
+        ],
+        'webshot' => [
+            'enabled'      => false, //Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
+            'cutyCapt'     => '/usr/local/bin/CutyCapt', //The path to CutyCapt.
+            'xvfb'         => '/usr/bin/xvfb-run', //The path to the Xvfb server
+            'screenX'      => '1024', //1024 works ok
+            'screenY'      => '768', //768 works ok
+            'colorDepth'   => '24', //I haven't tested anything besides 24
+            'imageFormat'  => 'png', //png is about 2.5 times the size of jpg but is a LOT better quality
+            'timeout'      => '20', //Seconds to wait for a webshot
+            'userAgent'    => "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0", //I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
+            'javascriptOn' => true, //Setting to false might give you a slight speedup and block ads. But it could cause other issues.
+            'javaOn'       => false, //Have only tested this as fase
+            'pluginsOn'    => true, //Enable flash and other plugins
+            'proxy'        => '', //In case you're behind a proxy server.
+            'xvfbRunning'  => false, //ADVANCED: Enable this if you've got Xvfb running in the background.
+        ],
     ];
 
     public static function get() {
         $path = sprintf('%s/%s-config.php', __DIR__, basename(__FILE__, '.php'));
         if (is_file($path) && $customConfig = include $path) {
-            return array_merge(self::$default, $customConfig);
+            return self::mergeConfig(self::$default, $customConfig);
         }
         return self::defaultConfig();
+    }
+
+    private static function mergeConfig($default, $custom) {
+        foreach ($custom as $key => $value) {
+            if (is_array($value) && isset($default[$key]) && is_array($default[$key])) {
+                $default[$key] = self::mergeConfig($default[$key], $value);
+            } else {
+                $default[$key] = $value;
+            }
+        }
+        return $default;
     }
 }
 
