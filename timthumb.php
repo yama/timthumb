@@ -1108,27 +1108,25 @@ class timthumb
 
     protected function openImage($mimeType, $src)
     {
-        switch ($mimeType) {
-            case 'image/jpeg':
-                $image = imagecreatefromjpeg($src);
-                break;
-
-            case 'image/png':
-                $image = imagecreatefrompng($src);
-                imagealphablending($image, true);
-                imagesavealpha($image, true);
-                break;
-
-            case 'image/gif':
-                $image = imagecreatefromgif($src);
-                break;
-
-            default:
-                $this->error("Unrecognised mimeType");
+        if ($mimeType === 'image/jpeg') {
+            return imagecreatefromjpeg($src);
         }
 
-        return $image;
+        if ($mimeType === 'image/gif') {
+            return imagecreatefromgif($src);
+        }
+
+        if ($mimeType === 'image/png') {
+            $image = imagecreatefrompng($src);
+            imagealphablending($image, true);
+            imagesavealpha($image, true);
+            return $image;
+        }
+
+        $this->error("Unrecognised mimeType");
+        return false;
     }
+
     protected function getIP()
     {
         $rem = serverv("REMOTE_ADDR");
@@ -1155,6 +1153,7 @@ class timthumb
         }
         return "UNKNOWN";
     }
+
     protected function debug($level, $msg)
     {
         if (config('debugOn') === false)     return;
@@ -1168,12 +1167,14 @@ class timthumb
         $this->lastBenchTime = microtime(true);
         error_log("TimThumb Debug line " . __LINE__ . " [$execTime : $tick]: $msg");
     }
+
     protected function sanityFail($msg)
     {
         return $this->error(
             "There is a problem in the timthumb code. Message: Please report this error at <a href='http://code.google.com/p/timthumb/issues/list'>timthumb's bug tracking page</a>: $msg"
         );
     }
+
     protected function getMimeType($file)
     {
         $info = getimagesize($file);
@@ -1182,6 +1183,7 @@ class timthumb
         }
         return '';
     }
+
     protected function setMemoryLimit()
     {
         $inimem = ini_get('memory_limit');
@@ -1194,6 +1196,7 @@ class timthumb
             $this->debug(3, "Not adjusting memory size because the current setting is " . $inimem . " and our size of " . config('memoryLimit') . " is smaller.");
         }
     }
+
     protected static function returnBytes($size_str)
     {
         switch (substr($size_str, -1)) {
@@ -1274,6 +1277,7 @@ class timthumb
         }
         return true;
     }
+
     protected function serveImg($file)
     {
         $s = getimagesize($file);
@@ -1295,10 +1299,12 @@ class timthumb
         }
         return false;
     }
+
     protected function set404()
     {
         $this->is404 = true;
     }
+
     protected function is404()
     {
         return $this->is404;
