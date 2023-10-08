@@ -14,11 +14,94 @@
  */
 
 const VERSION = '2.8.17'; // Version of this script
-if (!isset($_SERVER['REQUEST_TIME_FLOAT'])) {
-    $_SERVER['REQUEST_TIME_FLOAT'] = microtime(true);
-}
+
 $timthumb = new timthumb();
 $timthumb->start();
+
+class CONF
+{
+    public static $default = [
+        'debug' => [
+            'level'  => 1, // Debug level 1 is less noisy, while 3 is the most verbose. Set to 0 to disable
+            'displayErrorMessages' => true, // Display error messages. Set to false to turn off errors (good for production websites)
+        ],
+        'memoryLimit'   => '30M', // Set PHP memory limit
+        'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
+        'curlTimeout'   => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
+        'allowedSites'  => [], // Allowed external websites. Example: ['usercontent.google.com', 'img.youtube.com']
+
+        'browserCache' => [
+            'maxAge' => 60*60*24*10, // Time to cache in the browser
+            'enable' => true, // Use for testing if you want to disable all browser caching
+        ],
+        'fileCache' => [
+            'enabled'           => true, // Should we store resized/modified images on disk to speed things up?
+            'timeBetweenCleans' => 60*60*24, // How often the cache is cleaned
+            'maxFileAge'        => 60*60*24, // How old does a file have to be to be deleted from the cache
+            'suffix'            => '.cache', // What to put at the end of all files in the cache directory so we can identify them
+            'prefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
+            'directory'         => './cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
+        ],
+        'maxWidth'      => 1920, // Maximum image width
+        'maxHeight'     => 1920, // Maximum image height
+        'default' => [
+            'q'      => 90, // Default image quality.
+            'zc'     => 1, // Default zoom/crop setting.
+            'f'      => '', // Default image filters.
+            's'      => 0, // Default sharpen value.
+            'cc'     => 'ffffff', // Default canvas colour.
+            'width'  => 200, // Default thumbnail width.
+            'height' => 200, // Default thumbnail height.
+        ],
+        'png' => [
+            'isTransparent'   => false, // Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
+            'optipngEnabled'  => false,
+            'optipngPath'     => '/usr/bin/optipng', //This will run first because it gives better compression than pngcrush.
+            'pngcrushEnabled' => false,
+            'pngcrushPath'    => '/usr/bin/pngcrush', //This will only run if `png.optipngPath` is not set or is not valid
+        ],
+        'webshot' => [
+            'enabled'      => false, //Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
+            'cutyCapt'     => '/usr/local/bin/CutyCapt', //The path to CutyCapt.
+            'xvfb'         => '/usr/bin/xvfb-run', //The path to the Xvfb server
+            'screenX'      => '1024', //1024 works ok
+            'screenY'      => '768', //768 works ok
+            'colorDepth'   => '24', //I haven't tested anything besides 24
+            'imageFormat'  => 'png', //png is about 2.5 times the size of jpg but is a LOT better quality
+            'timeout'      => '20', //Seconds to wait for a webshot
+            'userAgent'    => "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0", //I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
+            'javascriptOn' => true, //Setting to false might give you a slight speedup and block ads. But it could cause other issues.
+            'javaOn'       => false, //Have only tested this as fase
+            'pluginsOn'    => true, //Enable flash and other plugins
+            'proxy'        => '', //In case you're behind a proxy server.
+            'xvfbRunning'  => false, //ADVANCED: Enable this if you've got Xvfb running in the background.
+        ],
+
+        'waitBetweenFetchErrors' => 3600, // Time to wait between errors fetching remote file
+        'blockExternalLeechers'  => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
+        'notFoundImage'          => '', // Image to serve if any 404 occurs
+        'errorImage'             => '', // Image to serve if an error occurs instead of showing error message
+    ];
+
+    public static function get() {
+        $path = sprintf('%s/%s-config.php', __DIR__, basename(__FILE__, '.php'));
+        if (is_file($path) && $customConfig = include $path) {
+            return self::mergeConfig(self::$default, $customConfig);
+        }
+        return self::defaultConfig();
+    }
+
+    private static function mergeConfig($default, $custom) {
+        foreach ($custom as $key => $value) {
+            if (is_array($value) && isset($default[$key]) && is_array($default[$key])) {
+                $default[$key] = self::mergeConfig($default[$key], $value);
+            } else {
+                $default[$key] = $value;
+            }
+        }
+        return $default;
+    }
+}
 
 class timthumb
 {
@@ -1334,91 +1417,6 @@ class timthumb
         header('Expires: ' . gmdate('D, d M Y H:i:s', serverv('REQUEST_TIME')));
         echo $imgData;
         return false;
-    }
-}
-
-class CONF
-{
-    public static $default = [
-        'debug' => [
-            'level'  => 1, // Debug level 1 is less noisy, while 3 is the most verbose. Set to 0 to disable
-            'displayErrorMessages' => true, // Display error messages. Set to false to turn off errors (good for production websites)
-        ],
-        'memoryLimit'   => '30M', // Set PHP memory limit
-        'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
-        'curlTimeout'   => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
-        'allowedSites'  => [], // Allowed external websites. Example: ['img.youtube.com','tinypic.com']
-
-        'waitBetweenFetchErrors' => 3600, // Time to wait between errors fetching remote file
-        'blockExternalLeechers'  => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
-        'notFoundImage' => '', // Image to serve if any 404 occurs
-        'errorImage'    => '', // Image to serve if an error occurs instead of showing error message
-
-        'browserCache' => [
-            'maxAge' => 60*60*24*10, // Time to cache in the browser
-            'enable' => true, // Use for testing if you want to disable all browser caching
-        ],
-        'fileCache' => [
-            'enabled'           => true, // Should we store resized/modified images on disk to speed things up?
-            'timeBetweenCleans' => 60*60*24, // How often the cache is cleaned
-            'maxFileAge'        => 60*60*24, // How old does a file have to be to be deleted from the cache
-            'suffix'            => '.cache', // What to put at the end of all files in the cache directory so we can identify them
-            'prefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
-            'directory'         => './cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
-        ],
-        'maxWidth'      => 1920, // Maximum image width
-        'maxHeight'     => 1920, // Maximum image height
-        'default' => [
-            'q'      => 90, // Default image quality.
-            'zc'     => 1, // Default zoom/crop setting.
-            'f'      => '', // Default image filters.
-            's'      => 0, // Default sharpen value.
-            'cc'     => 'ffffff', // Default canvas colour.
-            'width'  => 100, // Default thumbnail width.
-            'height' => 100, // Default thumbnail height.
-        ],
-        'png' => [
-            'isTransparent'   => false, // Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
-            'optipngEnabled'  => false,
-            'optipngPath'     => '/usr/bin/optipng', //This will run first because it gives better compression than pngcrush.
-            'pngcrushEnabled' => false,
-            'pngcrushPath'    => '/usr/bin/pngcrush', //This will only run if `png.optipngPath` is not set or is not valid
-        ],
-        'webshot' => [
-            'enabled'      => false, //Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
-            'cutyCapt'     => '/usr/local/bin/CutyCapt', //The path to CutyCapt.
-            'xvfb'         => '/usr/bin/xvfb-run', //The path to the Xvfb server
-            'screenX'      => '1024', //1024 works ok
-            'screenY'      => '768', //768 works ok
-            'colorDepth'   => '24', //I haven't tested anything besides 24
-            'imageFormat'  => 'png', //png is about 2.5 times the size of jpg but is a LOT better quality
-            'timeout'      => '20', //Seconds to wait for a webshot
-            'userAgent'    => "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0", //I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
-            'javascriptOn' => true, //Setting to false might give you a slight speedup and block ads. But it could cause other issues.
-            'javaOn'       => false, //Have only tested this as fase
-            'pluginsOn'    => true, //Enable flash and other plugins
-            'proxy'        => '', //In case you're behind a proxy server.
-            'xvfbRunning'  => false, //ADVANCED: Enable this if you've got Xvfb running in the background.
-        ],
-    ];
-
-    public static function get() {
-        $path = sprintf('%s/%s-config.php', __DIR__, basename(__FILE__, '.php'));
-        if (is_file($path) && $customConfig = include $path) {
-            return self::mergeConfig(self::$default, $customConfig);
-        }
-        return self::defaultConfig();
-    }
-
-    private static function mergeConfig($default, $custom) {
-        foreach ($custom as $key => $value) {
-            if (is_array($value) && isset($default[$key]) && is_array($default[$key])) {
-                $default[$key] = self::mergeConfig($default[$key], $value);
-            } else {
-                $default[$key] = $value;
-            }
-        }
-        return $default;
     }
 }
 
