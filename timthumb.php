@@ -1129,7 +1129,7 @@ class timthumb
 
     protected function debug($level, $msg)
     {
-        if (!config('debug.enable') || config('debug.level') < $level) {
+        if (!$level || config('debug.level') < $level) {
             return;
         }
 
@@ -1341,8 +1341,7 @@ class CONF
 {
     public static $default = [
         'debug' => [
-            'enable' => false, // Enable debug logging to web server error log (STDERR)
-            'level'  => 1, // Debug level 1 is less noisy and 3 is the most noisy
+            'level'  => 1, // Debug level 1 is less noisy, while 3 is the most verbose. Set to 0 to disable
             'displayErrorMessages' => true, // Display error messages. Set to false to turn off errors (good for production websites)
         ],
         'memoryLimit'   => '30M', // Set PHP memory limit
