@@ -160,3 +160,54 @@ The new scaling modes added by the &zc parameter are as follows:
 | s         | sharpen          |                       | Applying a sharp filter makes the resized image appear slightly sharper |
 | cc        | canvas colour    | Hex color value (#ffffff) | Changes the background color. Mostly used when changing zoom or trimming settings, and it might add borders to the image |
 | ct        | canvas transparency | True (1)          | Utilizes transparency, making the background color null |
+
+## Part 7: Config
+
+| Key                | Subkey            | Value                               | Comment                                                                                          |
+|--------------------|-------------------|-------------------------------------|--------------------------------------------------------------------------------------------------|
+| debug              | level             | 1                                   | Debug level 1 is less noisy, while 3 is the most verbose. Set to 0 to disable                    |
+| debug              | displayErrorMessages | true                             | Display error messages. Set to false to turn off errors (good for production websites)           |
+| memoryLimit        |                   | '30M'                               | Set PHP memory limit                                                                             |
+| maxFileSize        |                   | 15728640                            | 15 Megs is 15728640. This is the max internal or external file size that we'll process.          |
+| curlTimeout        |                   | 20                                  | Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism. |
+| allowedSites       |                   | []                                  | Allowed external websites. Example: ['usercontent.google.com', 'img.youtube.com']                |
+| browserCache       | maxAge            | 60*60*24*10                         | Time to cache in the browser                                                                     |
+| browserCache       | enable            | true                                | Use for testing if you want to disable all browser caching                                       |
+| fileCache          | enabled           | true                                | Should we store resized/modified images on disk to speed things up?                              |
+| fileCache          | timeBetweenCleans | 60*60*24                            | How often the cache is cleaned                                                                   |
+| fileCache          | maxFileAge        | 60*60*24                            | How old does a file have to be to be deleted from the cache                                      |
+| fileCache          | suffix            | '.cache'                            | What to put at the end of all files in the cache directory so we can identify them               |
+| fileCache          | prefix            | 'timthumb'                          | What to put at the beg of all files in the cache directory so we can identify them               |
+| fileCache          | directory         | './cache'                           | Directory where images are cached. Left blank it will use the system temporary directory (which is better for security) |
+| maxWidth           |                   | 1920                                | Maximum image width                                                                              |
+| maxHeight          |                   | 1920                                | Maximum image height                                                                             |
+| default            | q                 | 90                                  | Default image quality                                                                            |
+| default            | zc                | 1                                   | Default zoom/crop setting                                                                        |
+| default            | f                 | ''                                  | Default image filters                                                                            |
+| default            | s                 | 0                                   | Default sharpen value                                                                            |
+| default            | cc                | 'ffffff'                            | Default canvas colour                                                                            |
+| default            | width             | 200                                 | Default thumbnail width                                                                          |
+| default            | height            | 200                                 | Default thumbnail height                                                                         |
+| png                | isTransparent     | false                               | Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour |
+| png                | optipngEnabled    | false                               |                                                                                                  |
+| png                | optipngPath       | '/usr/bin/optipng'                  | This will run first because it gives better compression than pngcrush.                           |
+| png                | pngcrushEnabled   | false                               |                                                                                                  |
+| png                | pngcrushPath      | '/usr/bin/pngcrush'                 | This will only run if `png.optipngPath` is not set or is not valid                               |
+| webshot            | enabled           | false                               | Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image. |
+| webshot            | cutyCapt          | '/usr/local/bin/CutyCapt'           | The path to CutyCapt.                                                                            |
+| webshot            | xvfb              | '/usr/bin/xvfb-run'                 | The path to the Xvfb server                                                                      |
+| webshot            | screenX           | '1024'                              | 1024 works ok                                                                                    |
+| webshot            | screenY           | '768'                               | 768 works ok                                                                                     |
+| webshot            | colorDepth        | '24'                                | I haven't tested anything besides 24                                                             |
+| webshot            | imageFormat       | 'png'                               | png is about 2.5 times the size of jpg but is a LOT better quality                               |
+| webshot            | timeout           | '20'                                | Seconds to wait for a webshot                                                                    |
+| webshot            | userAgent         | "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0" | I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox |
+| webshot            | javascriptOn      | true                                | Setting to false might give you a slight speedup and block ads. But it could cause other issues. |
+| webshot            | javaOn            | false                               | Have only tested this as false                                                                   |
+| webshot            | pluginsOn         | true                                | Enable flash and other plugins                                                                   |
+| webshot            | proxy             | ''                                  | In case you're behind a proxy server.                                                            |
+| webshot            | xvfbRunning       | false                               | ADVANCED: Enable this if you've got Xvfb running in the background.                              |
+| waitBetweenFetchErrors |              | 3600                                | Time to wait between errors fetching remote file                                                  |
+| blockExternalLeechers  |              | false                               | If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.  |
+| notFoundImage         |                | ''                                  | Image to serve if any 404 occurs                                                                 |
+| errorImage            |                | ''                                  | Image to serve if an error occurs instead of showing error message                               |
