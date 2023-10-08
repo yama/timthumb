@@ -94,3 +94,29 @@ f=2|1,10
 This is a filter to sharpen the image. It does not use the PHP built-in imagefilter function, so its implementation is separate from the other filters mentioned above.
 
 To use it, add `&s=1` to the TimThumb query string.
+
+## Part 4: Moving the Crop Location
+
+### TimThumb Cropping Alignment/ Positioning
+
+Specifying this parameter allows you to align the cropping area to various edges of the image. It doesn’t use precise positioning with X, Y coordinates but aligns nicely. It should work almost flawlessly.
+
+### Usage
+
+To align the cropping, you need to add a parameter to the query string.
+
+- c : center position (this is the default)
+- t : top align
+- r : right align
+- b : bottom align
+- l : left align
+- tr : top right align
+- tl : top left align
+- br : bottom right align
+- bl : bottom left align
+
+Here is an example of how to use it:
+
+``````
+timthumb.php?src=image.jpg&w=100&h=100&a=t
+``````
