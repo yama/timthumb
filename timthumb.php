@@ -137,10 +137,10 @@ class timthumb
             $this->serveInternalImage();
             return true;
         }
-        if (!config('allowExternal')) {
+        if (!config('allowedSites') || !config('allowExternal')) {
             $this->debug(
                 1,
-                'Got a request for an external image but "allowExternal" is disabled so returning error msg.'
+                'Got a request for an external image but there are no allowed sites specified in the `allowedSites` option, so returning an error message.'
             );
             $this->error('You are not allowed to fetch images from an external website.');
             return false;
@@ -170,7 +170,7 @@ class timthumb
     }
 
     private function isExternalImageAllowed() {
-        if (!config('allowExternal')) {
+        if (!config('allowedSites')) {
             $this->error('You are not allowed to fetch images from an external website.');
             return false;
         }
@@ -189,10 +189,7 @@ class timthumb
         }
         if (!$allowed) {
             $this->error(
-                sprintf(
-                    'You may not fetch images from that site. To enable this site in timthumb, you can either add it to `allowedSites` and set %s=true.',
-                    config('allowExternal')
-                )
+                'You may not fetch images from that site. To enable this site in timthumb, you can either add it to `allowedSites`.'
             );
             return false;
         }
@@ -1351,8 +1348,7 @@ class CONF
         'memoryLimit'   => '30M', // Set PHP memory limit
         'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
         'curlTimeout'   => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
-        'allowExternal' => false, // Allow image fetching from external websites. Will check against `allowedSites`
-        'allowedSites'  => [], // Allowed external websites if `allowExternal` is set to true. Example: ['img.youtube.com','tinypic.com']
+        'allowedSites'  => [], // Allowed external websites. Example: ['img.youtube.com','tinypic.com']
 
         'waitBetweenFetchErrors' => 3600, // Time to wait between errors fetching remote file
         'blockExternalLeechers'  => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.

@@ -14,7 +14,6 @@ return [
     // 'maxFileSize'   => 15728640,
     // 'maxWidth'      => 1024,
     // 'maxHeight'     => 768,
-    // 'allowExternal' => false,
     // 'allowedSites'  => ['img.youtube.com','tinypic.com'],
     // 'fileCache' => [
     //     'maxFileAge' => 60*60*24,
