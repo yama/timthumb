@@ -57,7 +57,8 @@ The usage is simple. Just like when resizing images within your site, specify th
 
 You can apply various effects to images such as changes in brightness and contrast, monochromatization, blur, and emboss.
 
-### f – image filters
+### f – image filters (Filters derived from PHP built-in function imagefilter())
+
 Filters are controlled through the 'f' query variable. By specifying parameters, various filter effects are translated.
 
 Some filters require arguments such as color values or filter strength (amount of contrast, etc.), so you need to pass the filter ID followed by the arguments in a comma-separated list. For instance, the brightness filter (ID 3) requires one argument – so to set the brightness strength to 10, it would look like this:
@@ -87,3 +88,9 @@ You can chain multiple filters together. To do this, simply use the pipe charact
 ```
 f=2|1,10
 ```
+
+### s - Sharpen Image Filter
+
+This is a filter to sharpen the image. It does not use the PHP built-in imagefilter function, so its implementation is separate from the other filters mentioned above.
+
+To use it, add `&s=1` to the TimThumb query string.
