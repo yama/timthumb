@@ -35,3 +35,20 @@ The following parameters are mainly used. With these, you can resize almost any 
 - `q` Quality. Specifies the compression level of the image. The default is 85. You can specify 100, but it won't make the image any larger or more beautiful than the original.
 
 With just these parameters, you can easily integrate it into your site.
+
+## Part 2: External Site Images
+
+You can trim and resize images located on external sites. The fetched images are saved as cache within your site, so from the second time onwards, there is no access to the external site. Efforts have been made to make it as simple to use as possible, but with security in mind, a minimal additional configuration is necessary.
+
+### Setting
+
+Rename `timthumb-config.php.sample` to `timthumb-config.php`. Open this file and add the following line.
+
+```php
+'allowedSites'  => ['img.youtube.com','tinypic.com'],
+```
+In the sample, it's already written in a commented-out state, so you can simply uncomment it. By enabling this setting, you can use images from external sites.
+
+### Usage
+
+The usage is simple. Just like when resizing images within your site, specify the image URL with the `src` parameter.
