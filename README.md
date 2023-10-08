@@ -122,3 +122,26 @@ timthumb.php?src=image.jpg&w=100&h=100&a=t
 ``````
 
 TimThumb not only provides the functionality to resize images but also has the ability to crop images with different aspect ratios. For instance, it can extract a square image from a rectangular image and generate it as a profile picture. In this context, the only parameter in this section that seems particularly useful is '&a=c'. However, with this setting alone, we frequently received feedback from users such as "the fit is poor" or "it's unusable as content." The parameter to address this issue is the 'zc parameter', which will be explained in the next section.
+
+## Part 5: Proportional Scaling
+
+The specified crop position (&a=*) was a highly requested feature, however, in practice, it lacked practicality, with most cases being adequately handled by the default `&a=c`.
+
+As the user base expanded, a feature that came into demand was proportional scaling in conjunction with cropping. To be honest, it took some time to understand what users were seeking with this new request. Ultimately, what was being asked for was to 'just right' scale the image to fit the necessary dimensions while maintaining the image's aspect ratio. Simple scaling alone led to issues like unsightly margins, aspect ratio distortion, unnatural cropping, etc., making it difficult to 'fit just right'.
+
+From such observations, the `&zc` parameter was born.
+
+### Proportional Image Scaling
+
+The usage is straightforward. For instance, by just providing `&zc=2`, borders are applied as needed, and a fitting thumbnail image is generated.
+
+### &zc = Zoom & Crop
+
+The zc parameter was introduced to TimThumb about three months after its initial release. The reason behind its conception was that the original version's scaling was purely scaling, lacking a cropping feature. Without this, images could distort terribly.
+
+The new scaling modes added by the &zc parameter are as follows:
+
+- `0` Resize to the specified dimensions (no cropping)
+- `1` Resize and crop to the dimensions (default)
+- `2` Proportionally resize the image so the entire image fits the specified dimensions, adding borders as needed
+- `3` Proportionally resize the scaled image to the dimensions, ensuring no border gaps occur
