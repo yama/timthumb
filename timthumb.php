@@ -13,7 +13,7 @@
  *
  */
 
-const VERSION = '2.8.16'; // Version of this script
+const VERSION = '2.8.17'; // Version of this script
 if (!isset($_SERVER['REQUEST_TIME_FLOAT'])) {
     $_SERVER['REQUEST_TIME_FLOAT'] = microtime(true);
 }
