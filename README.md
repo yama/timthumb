@@ -52,3 +52,38 @@ In the sample, it's already written in a commented-out state, so you can simply 
 ### Usage
 
 The usage is simple. Just like when resizing images within your site, specify the image URL with the `src` parameter.
+
+## Part 3: Image Filters
+
+You can apply various effects to images such as changes in brightness and contrast, monochromatization, blur, and emboss.
+
+### f – image filters
+Filters are controlled through the 'f' query variable. By specifying parameters, various filter effects are translated.
+
+Some filters require arguments such as color values or filter strength (amount of contrast, etc.), so you need to pass the filter ID followed by the arguments in a comma-separated list. For instance, the brightness filter (ID 3) requires one argument – so to set the brightness strength to 10, it would look like this:
+
+```
+f=1,10
+```
+
+The image filters and arguments that are available are as follows:
+
+- `1` = Negate – Invert colours
+- `2` = Grayscale – turn the image into shades of grey
+- `3` = Brightness – Adjust brightness of image. Requires 1 argument to specify the amount of brightness to add. Values can be negative to make the image darker.
+- `4` = Contrast – Adjust contrast of image. Requires 1 argument to specify the amount of contrast to apply. Values greater than 0 will reduce the contrast and less than 0 will increase the contrast.
+- `5` = Colorize/ Tint – Apply a colour wash to the image. Requires the most parameters of all filters. The arguments are RGBA
+- `6` = Edge Detect – Detect the edges on an image
+- `7` = Emboss – Emboss the image (give it a kind of depth), can look nice when combined with the colorize filter above.
+- `8` = Gaussian Blur – blur the image, unfortunately, you can’t specify the amount, but you can apply the same filter multiple times (as shown in the demos)
+- `9` = Selective Blur – a different type of blur. Not sure what the difference is, but this blur is less strong than the Gaussian blur.
+- `10` = Mean Removal – Uses mean removal to create a “sketchy” effect.
+- `11` = Smooth – Makes the image smoother.
+
+### Specifying Multiple Filters at Once
+
+You can chain multiple filters together. To do this, simply use the pipe character to separate multiple filters and pass the whole to TimThumb. For example, the following value applies a brightness of 10 to a grayscale image.
+
+```
+f=2|1,10
+```
