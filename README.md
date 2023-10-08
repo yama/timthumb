@@ -163,6 +163,8 @@ The new scaling modes added by the &zc parameter are as follows:
 
 ## Part 7: Configuration
 
+The query string parameters are used to specify processing for each image, but the settings introduced here are for specifying the behavior of TimThumb itself. First, rename the file named 'timthumb-config.php.sample' to 'timthumb-config.php'. Then, extract the necessary settings from the CONF configuration within the 'timthumb.php' file, and write them into the 'timthumb-config.php' file.
+
 - `debug`
     - `level`
         - Default Value: 1
