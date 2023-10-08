@@ -145,3 +145,18 @@ The new scaling modes added by the &zc parameter are as follows:
 - `1` Resize and crop to the dimensions (default)
 - `2` Proportionally resize the image so the entire image fits the specified dimensions, adding borders as needed
 - `3` Proportionally resize the scaled image to the dimensions, ensuring no border gaps occur
+
+## Part 6: List of Parameters
+
+| Parameter | Origin           | Value                 | Description                                             |
+|-----------|------------------|-----------------------|------------------------------------------------------|
+| src       | source           | URL of the image      | Instructs TimThumb which image to resize             |
+| w         | width            | Width after resizing  | To scale proportionally, omit the width (height is required) |
+| h         | height           | Height after resizing | To scale proportionally, omit the height (width is required) |
+| q         | quality          | 0～100                | Compression quality. The higher the value, the better the image looks. It's not recommended to go above 95 as the image may become too large |
+| a         | alignment        | c, t, l, r, b, tl, tr, bl, br | Alignment for cropping. c = center, t = top, b = bottom, r = right, l = left. Positions can be combined to create diagonal positions |
+| zc        | zoom/crop        | 0, 1, 2, 3            | Changes settings for cropping and scaling            |
+| f         | filters          | Too many to mention   | Apply image filters to modify the resized image. For example, you can change brightness/contrast or blur the image |
+| s         | sharpen          |                       | Applying a sharp filter makes the resized image appear slightly sharper |
+| cc        | canvas colour    | Hex color value (#ffffff) | Changes the background color. Mostly used when changing zoom or trimming settings, and it might add borders to the image |
+| ct        | canvas transparency | True (1)          | Utilizes transparency, making the background color null |
