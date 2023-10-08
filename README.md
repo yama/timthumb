@@ -161,24 +161,24 @@ The new scaling modes added by the &zc parameter are as follows:
 | cc        | canvas colour    | Hex color value (#ffffff) | Changes the background color. Mostly used when changing zoom or trimming settings, and it might add borders to the image |
 | ct        | canvas transparency | True (1)          | Utilizes transparency, making the background color null |
 
-## Part 7: Config
+## Part 7: Configuration
 
 | Key                | Subkey            | Value                               | Comment                                                                                          |
 |--------------------|-------------------|-------------------------------------|--------------------------------------------------------------------------------------------------|
 | debug              | level             | 1                                   | Debug level 1 is less noisy, while 3 is the most verbose. Set to 0 to disable                    |
-| debug              | displayErrorMessages | true                             | Display error messages. Set to false to turn off errors (good for production websites)           |
+|                    | displayErrorMessages | true                             | Display error messages. Set to false to turn off errors (good for production websites)           |
 | memoryLimit        |                   | '30M'                               | Set PHP memory limit                                                                             |
 | maxFileSize        |                   | 15728640                            | 15 Megs is 15728640. This is the max internal or external file size that we'll process.          |
 | curlTimeout        |                   | 20                                  | Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism. |
 | allowedSites       |                   | []                                  | Allowed external websites. Example: ['usercontent.google.com', 'img.youtube.com']                |
 | browserCache       | maxAge            | 60*60*24*10                         | Time to cache in the browser                                                                     |
-| browserCache       | enable            | true                                | Use for testing if you want to disable all browser caching                                       |
+|                    | enable            | true                                | Use for testing if you want to disable all browser caching                                       |
 | fileCache          | enabled           | true                                | Should we store resized/modified images on disk to speed things up?                              |
-| fileCache          | timeBetweenCleans | 60*60*24                            | How often the cache is cleaned                                                                   |
-| fileCache          | maxFileAge        | 60*60*24                            | How old does a file have to be to be deleted from the cache                                      |
-| fileCache          | suffix            | '.cache'                            | What to put at the end of all files in the cache directory so we can identify them               |
-| fileCache          | prefix            | 'timthumb'                          | What to put at the beg of all files in the cache directory so we can identify them               |
-| fileCache          | directory         | './cache'                           | Directory where images are cached. Left blank it will use the system temporary directory (which is better for security) |
+|                    | timeBetweenCleans | 60*60*24                            | How often the cache is cleaned                                                                   |
+|                  | maxFileAge        | 60*60*24                            | How old does a file have to be to be deleted from the cache                                      |
+|                  | suffix            | '.cache'                            | What to put at the end of all files in the cache directory so we can identify them               |
+|                  | prefix            | 'timthumb'                          | What to put at the beg of all files in the cache directory so we can identify them               |
+|                  | directory         | './cache'                           | Directory where images are cached. Left blank it will use the system temporary directory (which is better for security) |
 | maxWidth           |                   | 1920                                | Maximum image width                                                                              |
 | maxHeight          |                   | 1920                                | Maximum image height                                                                             |
 | default            | q                 | 90                                  | Default image quality                                                                            |
