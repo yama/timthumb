@@ -137,7 +137,7 @@ class timthumb
             $this->serveInternalImage();
             return true;
         }
-        if (!config('allowedSites') || !config('allowExternal')) {
+        if (!config('allowedSites') || !config('allowExternal', true)) {
             $this->debug(
                 1,
                 'Got a request for an external image but there are no allowed sites specified in the `allowedSites` option, so returning an error message.'
