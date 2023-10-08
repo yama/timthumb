@@ -190,7 +190,7 @@ class timthumb
         if (!$allowed) {
             $this->error(
                 sprintf(
-                    'You may not fetch images from that site. To enable this site in timthumb, you can either add it to $ALLOWED_SITES and set %s=true.',
+                    'You may not fetch images from that site. To enable this site in timthumb, you can either add it to `allowedSites` and set %s=true.',
                     config('allowExternal')
                 )
             );
@@ -249,7 +249,7 @@ class timthumb
         }
 
         header(serverv('SERVER_PROTOCOL') . ' 400 Bad Request');
-        if (!config('displayErrorMessages')) {
+        if (!config('debug.displayErrorMessages')) {
             return;
         }
         $html = '<ul>';
@@ -267,7 +267,7 @@ class timthumb
 
     protected function tryBrowserCache()
     {
-        if (config('browserCacheDisable')) {
+        if (!config('browserCache.enable')) {
             $this->debug(3, 'Browser caching is disabled');
             return false;
         }
@@ -1084,14 +1084,14 @@ class timthumb
         header('Content-Length: ' . $dataSize);
         $etag = '"' . filemtime($this->cachefilePath) . '"';
         header(sprintf('ETag: %s', $etag));
-        if (config('browserCacheDisable')) {
+        if (!config('browserCache.enable')) {
             $this->debug(3, "Browser cache is disabled so setting non-caching headers.");
             header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
             header("Pragma: no-cache");
             header('Expires: ' . gmdate('D, d M Y H:i:s', now()));
         } else {
             $this->debug(3, "Browser caching is enabled");
-            header('Cache-Control: max-age=' . config('browserCacheMaxAge') . ', must-revalidate');
+            header('Cache-Control: max-age=' . config('browserCache.maxAge') . ', must-revalidate');
             header('Expires: ' . $gmdate_expires);
         }
         return true;
@@ -1132,7 +1132,7 @@ class timthumb
 
     protected function debug($level, $msg)
     {
-        if (!config('debugOn') || config('debugLevel') < $level) {
+        if (!config('debug.enable') || config('debug.level') < $level) {
             return;
         }
 
@@ -1343,22 +1343,26 @@ class timthumb
 class CONF
 {
     public static $default = [
-        'debugOn'                => false, // Enable debug logging to web server error log (STDERR)
-        'debugLevel'             => 1, // Debug level 1 is less noisy and 3 is the most noisy
-        'memoryLimit'            => '30M', // Set PHP memory limit
-        'maxFileSize'            => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
-        'curlTimeout'            => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
+        'debug' => [
+            'enable' => false, // Enable debug logging to web server error log (STDERR)
+            'level'  => 1, // Debug level 1 is less noisy and 3 is the most noisy
+            'displayErrorMessages' => true, // Display error messages. Set to false to turn off errors (good for production websites)
+        ],
+        'memoryLimit'   => '30M', // Set PHP memory limit
+        'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
+        'curlTimeout'   => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
+        'allowExternal' => false, // Allow image fetching from external websites. Will check against `allowedSites`
+        'allowedSites'  => [], // Allowed external websites if `allowExternal` is set to true. Example: ['img.youtube.com','tinypic.com']
+
         'waitBetweenFetchErrors' => 3600, // Time to wait between errors fetching remote file
-        'browserCacheMaxAge'     => 60*60*24*10, // Time to cache in the browser
-        'browserCacheDisable'    => false, // Use for testing if you want to disable all browser caching
         'blockExternalLeechers'  => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
-        'displayErrorMessages'   => true, // Display error messages. Set to false to turn off errors (good for production websites)
-        'maxWidth'      => 1920, // Maximum image width
-        'maxHeight'     => 1920, // Maximum image height
         'notFoundImage' => '', // Image to serve if any 404 occurs
         'errorImage'    => '', // Image to serve if an error occurs instead of showing error message
-        'allowExternal'          => false, // Allow image fetching from external websites. Will check against `allowedSites`
-        'allowedSites'           => [],
+
+        'browserCache' => [
+            'maxAge' => 60*60*24*10, // Time to cache in the browser
+            'enable' => true, // Use for testing if you want to disable all browser caching
+        ],
         'fileCache' => [
             'enabled'           => true, // Should we store resized/modified images on disk to speed things up?
             'timeBetweenCleans' => 60*60*24, // How often the cache is cleaned
@@ -1367,6 +1371,8 @@ class CONF
             'prefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
             'directory'         => './cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
         ],
+        'maxWidth'      => 1920, // Maximum image width
+        'maxHeight'     => 1920, // Maximum image height
         'default' => [
             'q'      => 90, // Default image quality.
             'zc'     => 1, // Default zoom/crop setting.
