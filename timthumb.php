@@ -3,13 +3,13 @@
 /**
  * TimThumb by Ben Gillbanks and Mark Maunder
  * Based on work done by Tim McDaniels and Darren Hoyt
- * http://code.google.com/p/timthumb/
+ * https://code.google.com/archive/p/timthumb/
  *
  * GNU General Public License, version 2
- * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+ * https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
  *
  * Examples and documentation available on the project homepage
- * http://www.binarymoon.co.uk/projects/timthumb/
+ * https://www.binarymoon.co.uk/projects/timthumb/
  *
  */
 
@@ -42,13 +42,13 @@ class timthumb
     protected $fileCacheVersion = 1;
     //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
     protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //";
-    protected static $curlDataWritten = 0;
-    protected static $curlFH = false;
+    protected $curlDataWritten = 0;
+    protected $curlFH = null;
 
     public function __construct()
     {
         date_default_timezone_set('UTC');
-        $this->debug(1, sprintf('Starting new request from %s to %s', $this->getIP(), serverv('REQUEST_URI')));
+        $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), serverv('REQUEST_URI')));
         $this->docRoot = $this->calcDocRoot();
         $this->cacheDirectory = $this->getCacheDirectory();
 
@@ -351,13 +351,6 @@ class timthumb
         return true;
     }
 
-    protected function error($err)
-    {
-        $this->debug(3, "Adding error message: $err");
-        $this->errors[] = $err;
-        return false;
-    }
-
     protected function serveInternalImage()
     {
         $this->debug(3, "Local image path is $this->localImagePath");
@@ -435,6 +428,7 @@ class timthumb
         $this->debug(3, "Cache was cleaned less than " . config('fileCache.timeBetweenCleans') . " seconds ago so no cleaning needed.");
         return false;
     }
+
     protected function processImageAndWriteToCache($localImage)
     {
         $sData = getimagesize($localImage);
@@ -781,7 +775,7 @@ class timthumb
 
     protected function calcDocRoot()
     {
-        $docRoot = defined('LOCAL_FILE_BASE_DIRECTORY') ? LOCAL_FILE_BASE_DIRECTORY : @serverv('DOCUMENT_ROOT');
+        $docRoot = defined('LOCAL_FILE_BASE_DIRECTORY') ? constant('LOCAL_FILE_BASE_DIRECTORY') : serverv('DOCUMENT_ROOT');
 
         if (!$docRoot) {
             $this->debug(3, "DOCUMENT_ROOT is not set. This is probably windows. Starting search 1.");
@@ -811,6 +805,7 @@ class timthumb
         $this->debug(3, "Doc root is: " . $docRoot);
         return $docRoot;
     }
+
     protected function getLocalImagePath($src)
     {
         $src = ltrim($src, '/'); //strip off the leading '/'
@@ -942,7 +937,7 @@ class timthumb
         $tempfile  = tempnam($this->cacheDirectory, 'timthumb_webshot');
         $url       = $this->src;
         $url       = preg_replace('@[^A-Za-z0-9\-._:/?&+;=]+@', '', $url); //RFC 3986 plus ()$ chars to prevent exploit below. Plus the following are also removed: @*!~#[]',
-        // 2014 update by Mark Maunder: This exploit: http://cxsecurity.com/issue/WLB-2014060134
+        // 2014 update by Mark Maunder: This exploit: https://cxsecurity.com/issue/WLB-2014060134
         // uses the $(command) shell execution syntax to execute arbitrary shell commands as the web server user.
         // So we're now filtering out the characters: '$', '(' and ')' in the above regex to avoid this.
         // We are also filtering out chars rarely used in URLs but legal accoring to the URL RFC which might be exploitable. These include: @*!~#[]',
@@ -1007,7 +1002,7 @@ class timthumb
         $this->debug(3, "Fetching external image into temporary file $tempfile");
         $this->toDelete($tempfile);
         #fetch file here
-        if (!$this->getURL($this->src, $tempfile)) {
+        if (!$this->fetchAndSaveImageFromUrl($this->src, $tempfile)) {
             @unlink($this->cachefilePath);
             touch($this->cachefilePath);
             $this->debug(3, "Error fetching URL: " . $this->lastURLError);
@@ -1031,16 +1026,16 @@ class timthumb
         return false;
     }
 
-    public static function curlWrite($h, $d)
+    public function curlWrite($curlHandle, $data, $fileHandle)
     {
-        fwrite(self::$curlFH, $d);
-        self::$curlDataWritten += strlen($d);
-        if (self::$curlDataWritten > config('maxFileSize')) {
+        fwrite($fileHandle, $data);
+        $dataSize = strlen($data);
+        if ($dataSize + ftell($fileHandle) > config('maxFileSize')) {
             return 0;
         }
-
-        return strlen($d);
+        return $dataSize;
     }
+
     protected function serveCacheFile()
     {
         $this->debug(3, "Serving {$this->cachefilePath}");
@@ -1048,34 +1043,33 @@ class timthumb
             $this->error("serveCacheFile called in timthumb but we couldn't find the cached file.");
             return false;
         }
+
         $fp = fopen($this->cachefilePath, 'rb');
         if (!$fp) {
-            return $this->error("Could not open cachefile.");
-        }
-        fseek($fp, strlen($this->filePrependSecurityBlock), SEEK_SET);
-        $imgType = fread($fp, 3);
-        fseek($fp, 3, SEEK_CUR);
-        if (ftell($fp) != strlen($this->filePrependSecurityBlock) + 6) {
-            @unlink($this->cachefilePath);
-            return $this->error("The cached image file seems to be corrupt.");
-        }
-        $imageDataSize = filesize($this->cachefilePath) - (strlen($this->filePrependSecurityBlock) + 6);
-        $this->sendImageHeaders($imgType, $imageDataSize);
-        $bytesSent = @fpassthru($fp);
-        fclose($fp);
-        if ($bytesSent > 0) {
-            return true;
-        }
-        $content = file_get_contents($this->cachefilePath);
-        if ($content != false) {
-            $content = substr($content, strlen($this->filePrependSecurityBlock) + 6);
-            echo $content;
-            $this->debug(3, "Served using file_get_contents and echo");
-            return true;
+            $this->error("Could not open cachefile.");
+            return false;
         }
 
-        $this->error("Cache file could not be loaded.");
-        return false;
+        $securityBlockSize = strlen($this->filePrependSecurityBlock);
+        fseek($fp, $securityBlockSize, SEEK_SET);
+
+        $this->sendImageHeaders(
+            fread($fp, 3),
+            filesize($this->cachefilePath) - ($securityBlockSize + 6)
+        );
+
+        fseek($fp, 3, SEEK_CUR);
+        while (!feof($fp)) {
+            $bytesSent = @fread($fp, 8192);
+            if ($bytesSent === false) {
+                $this->error("Error reading from cachefile.");
+                break;
+            }
+            echo $bytesSent;
+        }
+
+        fclose($fp);
+        return true;
     }
 
     protected function sendImageHeaders($mimeType, $dataSize)
@@ -1112,10 +1106,6 @@ class timthumb
             return imagecreatefromjpeg($src);
         }
 
-        if ($mimeType === 'image/gif') {
-            return imagecreatefromgif($src);
-        }
-
         if ($mimeType === 'image/png') {
             $image = imagecreatefrompng($src);
             imagealphablending($image, true);
@@ -1123,55 +1113,55 @@ class timthumb
             return $image;
         }
 
+        if ($mimeType === 'image/gif') {
+            return imagecreatefromgif($src);
+        }
+
         $this->error("Unrecognised mimeType");
         return false;
     }
 
-    protected function getIP()
+    protected function getClientIP()
     {
-        $rem = serverv("REMOTE_ADDR");
-        $ff = serverv("HTTP_X_FORWARDED_FOR");
-        $ci = serverv("HTTP_CLIENT_IP");
-        if (preg_match('/^(?:192\.168|172\.16|10\.|127\.)/', $rem)) {
-            if ($ff) {
-                return $ff;
-            }
-            if ($ci) {
-                return $ci;
-            }
-            return $rem;
+        $forwardedFor = trim(explode(',', serverv('HTTP_X_FORWARDED_FOR', ''))[0]);
+        $ip = $forwardedFor ?: serverv('HTTP_CLIENT_IP') ?: serverv('REMOTE_ADDR');
+
+        if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            return 'illegal';
         }
 
-        if ($rem) {
-            return $rem;
-        }
-        if ($ff) {
-            return $ff;
-        }
-        if ($ci) {
-            return $ci;
-        }
-        return "UNKNOWN";
+        return $ip;
     }
 
     protected function debug($level, $msg)
     {
-        if (config('debugOn') === false)     return;
-        if (config('debugLevel') < $level) return;
-
-        $execTime = sprintf('%.6f', microtime(true) - serverv('REQUEST_TIME_FLOAT'));
-        $tick = sprintf('%.6f', 0);
-        if ($this->lastBenchTime > 0) {
-            $tick = sprintf('%.6f', microtime(true) - $this->lastBenchTime);
+        if (!config('debugOn') || config('debugLevel') < $level) {
+            return;
         }
+
         $this->lastBenchTime = microtime(true);
-        error_log("TimThumb Debug line " . __LINE__ . " [$execTime : $tick]: $msg");
+        error_log(
+            sprintf(
+                "TimThumb Debug line %d [%.6f : %.6f]: %s",
+                __LINE__,
+                (microtime(true) - serverv('REQUEST_TIME_FLOAT')),
+                ($this->lastBenchTime ? microtime(true) - $this->lastBenchTime : 0),
+                $msg
+            )
+        );
+    }
+
+    protected function error($err)
+    {
+        $this->debug(3, "Adding error message: $err");
+        $this->errors[] = $err;
+        return false;
     }
 
     protected function sanityFail($msg)
     {
         return $this->error(
-            "There is a problem in the timthumb code. Message: Please report this error at <a href='http://code.google.com/p/timthumb/issues/list'>timthumb's bug tracking page</a>: $msg"
+            "There is a problem in the timthumb code. Message: Please report this error at <a href='https://code.google.com/archive/p/timthumb/'>timthumb's bug tracking page</a>: $msg"
         );
     }
 
@@ -1186,118 +1176,141 @@ class timthumb
 
     protected function setMemoryLimit()
     {
-        $inimem = ini_get('memory_limit');
-        $inibytes = timthumb::returnBytes($inimem);
-        $ourbytes = timthumb::returnBytes(config('memoryLimit'));
+        $inimem   = ini_get('memory_limit');
+        $inibytes = $this->returnBytes($inimem);
+        $ourbytes = $this->returnBytes(config('memoryLimit'));
+
         if ($inibytes < $ourbytes) {
             ini_set('memory_limit', config('memoryLimit'));
-            $this->debug(3, "Increased memory from $inimem to " . config('memoryLimit'));
-        } else {
-            $this->debug(3, "Not adjusting memory size because the current setting is " . $inimem . " and our size of " . config('memoryLimit') . " is smaller.");
+            $this->debug(
+                3,
+                sprintf("Increased memory from %s to %s", $inimem, config('memoryLimit'))
+            );
+            return;
         }
+
+        $this->debug(
+            3,
+            sprintf(
+                "Not adjusting memory size because the current setting is %s and our size of %s is smaller.",
+                $inimem,
+                config('memoryLimit')
+            )
+        );
     }
 
-    protected static function returnBytes($size_str)
+    protected function returnBytes($size_str)
     {
-        switch (substr($size_str, -1)) {
-            case 'M':
-            case 'm':
-                return (int)$size_str * 1024 * 1024;
-            case 'K':
-            case 'k':
-                return (int)$size_str * 1024;
-            case 'G':
-            case 'g':
-                return (int)$size_str * 1024 * 1024 * 1024;
-            default:
-                return $size_str;
-        }
+        $units = [
+            'k' => 1024,
+            'm' => 1024 * 1024,
+            'g' => 1024 * 1024 * 1024
+        ];
+
+        $unit = strtolower(substr($size_str, -1));
+        $size = (int)$size_str;
+
+        return isset($units[$unit]) ? $size * $units[$unit] : $size;
     }
 
-    protected function getURL($url, $tempfile)
+    protected function fetchAndSaveImageFromUrl($url, $tempfile)
     {
         $this->lastURLError = false;
         $url = str_replace(' ', '%20', $url);
-        if (function_exists('curl_init')) {
+        if (extension_loaded('curl')) {
             $this->debug(3, "Curl is installed so using it to fetch URL.");
-            self::$curlFH = fopen($tempfile, 'w');
-            if (!self::$curlFH) {
+            $this->curlDataWritten = 0;
+            $this->debug(3, "Fetching url with curl: $url");
+
+            $curlHandle = curl_init($url);
+            $fileHandle = fopen($tempfile, 'wb');
+            if (!$fileHandle) {
                 $this->error("Could not open $tempfile for writing.");
                 return false;
             }
-            self::$curlDataWritten = 0;
-            $this->debug(3, "Fetching url with curl: $url");
-            $curl = curl_init($url);
-            curl_setopt($curl, CURLOPT_TIMEOUT, config('curlTimeout'));
-            curl_setopt($curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Windows NT 6.1) AppleWebKit/534.30 (KHTML, like Gecko) Chrome/12.0.742.122 Safari/534.30");
-            curl_setopt($curl, CURLOPT_RETURNTRANSFER, TRUE);
-            curl_setopt($curl, CURLOPT_HEADER, 0);
-            curl_setopt($curl, CURLOPT_SSL_VERIFYPEER, FALSE);
-            curl_setopt($curl, CURLOPT_WRITEFUNCTION, 'timthumb::curlWrite');
-            @curl_setopt($curl, CURLOPT_FOLLOWLOCATION, true);
-            @curl_setopt($curl, CURLOPT_MAXREDIRS, 10);
 
-            $curlResult = curl_exec($curl);
-            fclose(self::$curlFH);
-            $httpStatus = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+            $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36";
+            curl_setopt($curlHandle, CURLOPT_TIMEOUT, config('curlTimeout'));
+            curl_setopt($curlHandle, CURLOPT_USERAGENT, $ua);
+            curl_setopt($curlHandle, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($curlHandle, CURLOPT_HEADER, 0);
+            curl_setopt($curlHandle, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($curlHandle, CURLOPT_FOLLOWLOCATION, 5);
+            curl_setopt($curlHandle, CURLOPT_MAXREDIRS, 10);
+            curl_setopt($curlHandle, CURLOPT_WRITEFUNCTION, function ($curlHandle, $data) use ($fileHandle) {
+                return $this->curlWrite($curlHandle, $data, $fileHandle);
+            });
+            $response = curl_exec($curlHandle);
+            $httpStatus = curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
+
+            if ($response === false) {
+                $this->lastURLError = curl_error($curlHandle);
+                curl_close($curlHandle);
+                fclose($fileHandle);
+                return false;
+            }
+
+            if ($httpStatus == 302) {
+                $this->error("External Image is Redirecting. Try alternate image url");
+                curl_close($curlHandle);
+                fclose($fileHandle);
+                return false;
+            }
+
             if ($httpStatus == 404) {
                 $this->set404();
             }
-            if ($httpStatus == 302) {
-                $this->error("External Image is Redirecting. Try alternate image url");
-                return false;
-            }
-            if ($curlResult) {
-                curl_close($curl);
-                return true;
-            }
 
-            $this->lastURLError = curl_error($curl);
-            curl_close($curl);
-            return false;
+            curl_close($curlHandle);
+            fclose($fileHandle);
+            return true;
         }
 
         $img = @file_get_contents($url);
         if ($img === false) {
             $err = error_get_last();
-            if (is_array($err) && $err['message']) {
-                $this->lastURLError = $err['message'];
-            } else {
-                $this->lastURLError = $err;
-            }
+            $this->lastURLError
+                = (!is_array($err) || !$err['message'])
+                    ? $err
+                    : $err['message']
+            ;
             if (strpos($this->lastURLError, '404') !== false) {
                 $this->set404();
             }
-
             return false;
         }
+
         if (!file_put_contents($tempfile, $img)) {
             $this->error("Could not write to $tempfile.");
             return false;
         }
+
         return true;
     }
 
     protected function serveImg($file)
     {
-        $s = getimagesize($file);
-        if (empty($s['mime'])) {
+        if (!is_file($file)) {
             return false;
         }
-        header('Content-Type: ' . $s['mime']);
+        $mime = mime_content_type($file);
+        if (!$mime) {
+            return false;
+        }
+
+        header('Content-Type: ' . $mime);
         header('Content-Length: ' . filesize($file));
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
         header("Pragma: no-cache");
         $bytes = @readfile($file);
-        if ($bytes > 0) {
-            return true;
-        }
-        $content = @file_get_contents($file);
-        if ($content != false) {
+        if ($bytes === false) {
+            $content = @file_get_contents($file);
+            if ($content === false) {
+                return false;
+            }
             echo $content;
-            return true;
         }
-        return false;
+        return true;
     }
 
     protected function set404()
@@ -1336,7 +1349,7 @@ class CONF
         'debugOn'                => false, // Enable debug logging to web server error log (STDERR)
         'debugLevel'             => 1, // Debug level 1 is less noisy and 3 is the most noisy
         'memoryLimit'            => '30M', // Set PHP memory limit
-        'maxFileSize'            => 15728640, // 15 Megs is 10485760. This is the max internal or external file size that we'll process.
+        'maxFileSize'            => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
         'curlTimeout'            => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
         'waitBetweenFetchErrors' => 3600, // Time to wait between errors fetching remote file
         'browserCacheMaxAge'     => 60*60*24*10, // Time to cache in the browser
