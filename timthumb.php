@@ -175,29 +175,26 @@ class timthumb
             return false;
         }
 
-        if (!config('allowAllExternalSites')) {
-            $this->debug(2, 'Fetching only from selected external sites is enabled.');
-            $allowed = false;
-            foreach (config('allowedSites') as $site) {
-                $hostLower = strtolower($this->url['host']);
-                $siteLower = strtolower($site);
-                // Check if $siteLower is a substring at the end of $hostLower
-                $isSubString = strpos($hostLower, $siteLower) === strlen($hostLower) - strlen($siteLower);
-                if ($isSubString || $hostLower == '.' . $siteLower) {
-                    $this->debug(3, sprintf('URL hostname %s matches %s so allowing.', $this->url['host'], $site));
-                    $allowed = true;
-                }
+        $this->debug(2, 'Fetching only from selected external sites is enabled.');
+        $allowed = false;
+        foreach (config('allowedSites') as $site) {
+            $hostLower = strtolower($this->url['host']);
+            $siteLower = strtolower($site);
+            // Check if $siteLower is a substring at the end of $hostLower
+            $isSubString = strpos($hostLower, $siteLower) === strlen($hostLower) - strlen($siteLower);
+            if ($isSubString || $hostLower == '.' . $siteLower) {
+                $this->debug(3, sprintf('URL hostname %s matches %s so allowing.', $this->url['host'], $site));
+                $allowed = true;
             }
-            if (!$allowed) {
-                $this->error(
-                    sprintf(
-                        'You may not fetch images from that site. To enable this site in timthumb, you can either add it to $ALLOWED_SITES and set %s=true. Or you can set %s=true, depending on your security needs.',
-                        config('allowExternal'),
-                        config('allowAllExternalSites')
-                    )
-                );
-                return false;
-            }
+        }
+        if (!$allowed) {
+            $this->error(
+                sprintf(
+                    'You may not fetch images from that site. To enable this site in timthumb, you can either add it to $ALLOWED_SITES and set %s=true.',
+                    config('allowExternal')
+                )
+            );
+            return false;
         }
 
         $this->debug(2, 'Fetching from all external sites is enabled.');
@@ -1360,9 +1357,8 @@ class CONF
         'maxHeight'     => 1920, // Maximum image height
         'notFoundImage' => '', // Image to serve if any 404 occurs
         'errorImage'    => '', // Image to serve if an error occurs instead of showing error message
-        'allowExternal'          => false, // Allow image fetching from external websites. Will check against `allowedSites` if `allowAllExternalSites` is false
+        'allowExternal'          => false, // Allow image fetching from external websites. Will check against `allowedSites`
         'allowedSites'           => [],
-        'allowAllExternalSites'  => false, // Less secure.
         'fileCache' => [
             'enabled'           => true, // Should we store resized/modified images on disk to speed things up?
             'timeBetweenCleans' => 60*60*24, // How often the cache is cleaned
