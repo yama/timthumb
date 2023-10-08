@@ -120,3 +120,5 @@ Here is an example of how to use it:
 ``````
 timthumb.php?src=image.jpg&w=100&h=100&a=t
 ``````
+
+TimThumb not only provides the functionality to resize images but also has the ability to crop images with different aspect ratios. For instance, it can extract a square image from a rectangular image and generate it as a profile picture. In this context, the only parameter in this section that seems particularly useful is '&a=c'. However, with this setting alone, we frequently received feedback from users such as "the fit is poor" or "it's unusable as content." The parameter to address this issue is the 'zc parameter', which will be explained in the next section.
