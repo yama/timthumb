@@ -10,18 +10,18 @@
 // Please refer to the defaultConfig() method of the CONF class
 
 return [
-    // 'memoryLimit'   => '30M',
-    // 'maxFileSize'   => 15728640,
-    // 'maxWidth'      => 1024,
-    // 'maxHeight'     => 768,
-    // 'allowedSites'  => ['img.youtube.com','tinypic.com'],
+    // 'memoryLimit'  => '30M',
+    // 'maxFileSize'  => 15728640,
+    // 'maxWidth'     => 1024,
+    // 'maxHeight'    => 768,
+    // 'allowedSites' => ['img.youtube.com','tinypic.com'],
     // 'fileCache' => [
     //     'maxFileAge' => 60*60*24,
     //     'directory'  => __DIR__ . '/cache',
     // ],
     // 'default' => [
-    //     'q'      => 83,
-    //     'w'  => 300,
+    //     'q' => 83,
+    //     'w' => 300,
     //     'h' => 300,
     // ],
     // etc...
