@@ -8,7 +8,7 @@ Around the year 2010, Ben has distanced himself from the development of TimThumb
 
 Due to these reasons, I have taken over the source code and continue to make improvements to TimThumb. I hope to see an increase in TimThumb users moving forward.
 
-## part 1: Getting Started
+## Part 1: Getting Started
 
 TimThumb has been built with a focus on being lightweight, simple, understandable, and secure.
 
