@@ -30,6 +30,10 @@ TimThumb can be used by just specifying the URL of the image. For example, it wo
 
 The following parameters are mainly used. With these, you can resize almost any size.
 
+```html
+<img src="/path/to/timthumb.php?src=/images/image.jpg&w=200&h=200&q=83" />
+```
+
 - `src` The only required parameter. Specifies the path to the image. You can also specify the URL of an image from an external site (※configuration required).
 - `w` and `h` Width and height. Optional. If omitted, it will be trimmed/resized to default dimensions (100 x 100).
 - `q` Quality. Specifies the compression level of the image. The default is 85. You can specify 100, but it won't make the image any larger or more beautiful than the original.
