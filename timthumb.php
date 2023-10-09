@@ -130,6 +130,11 @@ class timthumb
 
     public function __construct()
     {
+        if (!extension_loaded('gd')) {
+            $this->error('GD extension is not loaded');
+            return;
+        }
+
         date_default_timezone_set('UTC');
         $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), serverv('REQUEST_URI')));
         $this->cacheDirectory = $this->getCacheDirectory();
@@ -144,8 +149,8 @@ class timthumb
             $this->error('No image specified');
             return;
         }
-        if (config('blockExternalLeechers') && !$this->allowHotlinking()) {
-            $this->dispRedImage();
+        if (config('blockExternalLeechers') && !$this->isAllowedReferer()) {
+            echo $this->dispRedImage();
             return;
         }
 
@@ -502,37 +507,15 @@ class timthumb
 
     protected function processImageAndWriteToCache($localImage)
     {
-        $sData = getimagesize($localImage);
-        $origWidth  = $sData[0];
-        $origHeight = $sData[1];
-        $origType = $sData[2];
-        $mimeType = $sData['mime'];
+        $sData      = getimagesize($localImage);
+        $origWidth  = $sData[0] ?? null;
+        $origHeight = $sData[1] ?? null;
+        $origType   = $sData[2] ?? null;
+        $mimeType   = $sData['mime'] ?? null;
 
         $this->debug(3, "Mime type of image is $mimeType");
         if (!preg_match('@^image/(?:gif|jpg|jpeg|png)$@i', $mimeType)) {
             return $this->error("The image being resized is not a valid gif, jpg or png.");
-        }
-
-        if (!function_exists('imagecreatetruecolor')) {
-            return $this->error(
-                'GD Library Error: imagecreatetruecolor does not exist - please contact your webhost and ask them to install the GD library'
-            );
-        }
-
-        if (function_exists('imagefilter') && defined('IMG_FILTER_NEGATE')) {
-            $imageFilters = [
-                1 => [IMG_FILTER_NEGATE, 0],
-                2 => [IMG_FILTER_GRAYSCALE, 0],
-                3 => [IMG_FILTER_BRIGHTNESS, 1],
-                4 => [IMG_FILTER_CONTRAST, 1],
-                5 => [IMG_FILTER_COLORIZE, 4],
-                6 => [IMG_FILTER_EDGEDETECT, 0],
-                7 => [IMG_FILTER_EMBOSS, 0],
-                8 => [IMG_FILTER_GAUSSIAN_BLUR, 0],
-                9 => [IMG_FILTER_SELECTIVE_BLUR, 0],
-                10 => [IMG_FILTER_MEAN_REMOVAL, 0],
-                11 => [IMG_FILTER_SMOOTH, 0],
-            ];
         }
 
         // get standard input properties
@@ -702,38 +685,33 @@ class timthumb
             );
         }
 
-        if ($filters != '' && function_exists('imagefilter') && defined('IMG_FILTER_NEGATE')) {
+        if ($filters && function_exists('imagefilter') && defined('IMG_FILTER_NEGATE')) {
+            $imageFilters = [
+                1 => [IMG_FILTER_NEGATE, 0],
+                2 => [IMG_FILTER_GRAYSCALE, 0],
+                3 => [IMG_FILTER_BRIGHTNESS, 1],
+                4 => [IMG_FILTER_CONTRAST, 1],
+                5 => [IMG_FILTER_COLORIZE, 4],
+                6 => [IMG_FILTER_EDGEDETECT, 0],
+                7 => [IMG_FILTER_EMBOSS, 0],
+                8 => [IMG_FILTER_GAUSSIAN_BLUR, 0],
+                9 => [IMG_FILTER_SELECTIVE_BLUR, 0],
+                10 => [IMG_FILTER_MEAN_REMOVAL, 0],
+                11 => [IMG_FILTER_SMOOTH, 0],
+            ];
             // apply filters to image
             $filterList = explode('|', $filters);
             foreach ($filterList as $fl) {
                 $settings = explode(',', $fl);
-                if (isset($imageFilters[$settings[0]])) {
-                    for ($i = 0; $i < 4; $i++) {
-                        if (isset($settings[$i])) {
-                            $settings[$i] = (int)$settings[$i];
-                        } else {
-                            $settings[$i] = null;
-                        }
-                    }
-                    $filter = $imageFilters[$settings[0]][0];
-                    switch ($imageFilters[$settings[0]][1]) {
-                        case 1: // IMG_FILTER_NEGATE
-                            imagefilter($canvas, $filter, $settings[1]);
-                            break;
-                        case 2: // IMG_FILTER_GRAYSCALE
-                            imagefilter($canvas, $filter, $settings[1], $settings[2]);
-                            break;
-                        case 3: // IMG_FILTER_BRIGHTNESS
-                            imagefilter($canvas, $filter, $settings[1], $settings[2], $settings[3]);
-                            break;
-                        case 4: // IMG_FILTER_CONTRAST
-                            imagefilter($canvas, $filter, $settings[1], $settings[2], $settings[3], $settings[4]);
-                            break;
-                        default:
-                            imagefilter($canvas, $filter);
-                            break;
-                    }
+                if (!isset($imageFilters[$settings[0]])) {
+                    continue;
                 }
+                for ($i = 0; $i < 4; $i++) {
+                    $settings[$i] = isset($settings[$i]) ? (int)$settings[$i] : null;
+                }
+                $filter = $imageFilters[$settings[0]][0];
+                $args = array_slice($settings, 1);
+                imagefilter($canvas, $filter, ...$args);
             }
         }
 
@@ -763,47 +741,16 @@ class timthumb
         } elseif (preg_match('@^image/png$@i', $mimeType)) {
             $imgType = 'png';
             imagepng($canvas, $tempfile, floor($quality * 0.09));
+            if (config('png.optipngEnabled')) {
+                $this->handleOptiPng($tempfile);
+            } elseif (config('png.pngcrushEnabled')) {
+                $this->handlePngCrush($tempfile);
+            }
         } elseif (preg_match('@^image/gif$@i', $mimeType)) {
             $imgType = 'gif';
             imagegif($canvas, $tempfile);
         } else {
             return $this->sanityFail("Could not match mime type after verifying it previously.");
-        }
-
-        if ($imgType === 'png' && config('png.optipngEnabled') && config('png.optipngPath') && @is_file(config('png.optipngPath'))) {
-            $exec = config('png.optipngPath');
-            $this->debug(3, "optipng'ing $tempfile");
-            $out = `$exec -o1 $tempfile`; //you can use up to -o7 but it really slows things down
-            clearstatcache();
-            $aftersize = filesize($tempfile);
-            $sizeDrop = filesize($tempfile) - $aftersize;
-            if ($sizeDrop > 0) {
-                $this->debug(1, "optipng reduced size by $sizeDrop");
-            } elseif ($sizeDrop < 0) {
-                $this->debug(1, "optipng increased size! Difference was: $sizeDrop");
-            } else {
-                $this->debug(1, "optipng did not change image size.");
-            }
-        } elseif ($imgType === 'png' && config('png.pngcrushEnabled') && config('png.pngcrushPath') && @is_file(config('png.pngcrushPath'))) {
-            $exec = config('png.pngcrushPath');
-            $tempfile2 = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
-            $this->debug(3, "pngcrush'ing $tempfile to $tempfile2");
-            $out = `$exec $tempfile $tempfile2`;
-            if (is_file($tempfile2)) {
-                $sizeDrop = filesize($tempfile) - filesize($tempfile2);
-                if ($sizeDrop > 0) {
-                    $this->debug(1, "pngcrush was succesful and gave a $sizeDrop byte size reduction");
-                    $todel = $tempfile;
-                    $tempfile = $tempfile2;
-                } else {
-                    $this->debug(1, "pngcrush did not reduce file size. Difference was $sizeDrop bytes.");
-                    $todel = $tempfile2;
-                }
-            } else {
-                $this->debug(3, "pngcrush failed with output: $out");
-                $todel = $tempfile2;
-            }
-            @unlink($todel);
         }
 
         $this->debug(3, "Rewriting image with security header.");
@@ -842,6 +789,56 @@ class timthumb
         }
         $this->debug(3, "Done image replace with security header. Cleaning up and running cleanCache()");
         return true;
+    }
+
+    protected function handleOptiPng($tempFilePath) {
+
+        if (!config('png.optipngPath') || !is_file(config('png.optipngPath'))) {
+            $this->debug(3, "optipng is not enabled or optipngPath is not set.");
+            return;
+        }
+
+        $this->debug(3, "optipng'ing $tempFilePath");
+        $orgSize = filesize($tempFilePath);
+        exec(config('png.optipngPath') . ' -o1 ' . $tempFilePath); //you can use up to -o7 but it really slows things down
+        clearstatcache();
+        $afterSize = filesize($tempFilePath);
+        $sizeDrop = $orgSize - $afterSize;
+        if ($sizeDrop < 0) {
+            $this->debug(1, "optipng increased size! Difference was: $sizeDrop");
+            return;
+        }
+        if ($sizeDrop == 0) {
+            $this->debug(1, "optipng did not change image size.");
+            return;
+        }
+        $this->debug(1, "optipng reduced size by $sizeDrop");
+    }
+
+    protected function handlePngCrush($tempFilePath) {
+        $pngCrushPath = config('png.pngcrushPath');
+        if (!$pngCrushPath || !is_file($pngCrushPath)) {
+            $this->debug(3, "pngcrush is not enabled or pngcrushPath is not set.");
+            return;
+        }
+
+        $pngCrushFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
+        $this->debug(3, "pngcrush'ing $tempFilePath to $pngCrushFilePath");
+        exec("$pngCrushPath $tempFilePath $pngCrushFilePath", $out);
+        if (!is_file($pngCrushFilePath)) {
+            $this->debug(3, "pngcrush failed with output:" . print_r($out, true));
+            return;
+        }
+
+        $sizeDrop = filesize($tempFilePath) - filesize($pngCrushFilePath);
+        if ($sizeDrop <= 0) {
+            $this->debug(1, "pngcrush did not reduce file size. Difference was $sizeDrop bytes.");
+            unlink($pngCrushFilePath);
+            return;
+        }
+
+        $this->debug(1, "pngcrush was succesful and gave a $sizeDrop byte size reduction");
+        rename($pngCrushFilePath, $tempFilePath);
     }
 
     protected function calcDocRoot()
@@ -1397,7 +1394,7 @@ class timthumb
         return $this->is404;
     }
 
-    protected function allowHotlinking()
+    protected function isAllowedReferer()
     {
         if (!serverv('HTTP_REFERER')) {
             return false;
@@ -1421,8 +1418,7 @@ class timthumb
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
         header('Pragma: no-cache');
         header('Expires: ' . gmdate('D, d M Y H:i:s', serverv('REQUEST_TIME')));
-        echo $imgData;
-        return false;
+        return $imgData;
     }
 }
 
