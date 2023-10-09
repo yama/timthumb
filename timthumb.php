@@ -13,7 +13,7 @@
  *
  */
 
-const VERSION = '2.8.17'; // Version of this script
+const VERSION = '2.9.0'; // Version of this script
 
 $timthumb = new timthumb();
 $timthumb->start();
@@ -132,30 +132,28 @@ class timthumb
     {
         date_default_timezone_set('UTC');
         $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), serverv('REQUEST_URI')));
-        $this->docRoot = $this->calcDocRoot();
         $this->cacheDirectory = $this->getCacheDirectory();
 
         //Clean the cache before we do anything because we don't want the first visitor after config('fileCache.timeBetweenCleans') expires to get a stale image.
         $this->cleanCache();
 
         $this->myHost = preg_replace('@^www\.@i', '', serverv('HTTP_HOST'));
-        $this->url = parse_url(getv('src'));
-        $this->src = preg_replace('@https?://(?:www\.)?' . $this->myHost . '@i', '', getv('src'));
+        $this->src    = preg_replace('@https?://(?:www\.)?' . $this->myHost . '@i', '', getv('src'));
 
         if (strlen($this->src) <= 3) {
             $this->error('No image specified');
             return;
         }
-        if (config('blockExternalLeechers') && serverv('HTTP_REFERER')) {
-            if (!$this->dispRedImage()) {
-                return false;
-            }
+        if (config('blockExternalLeechers') && !$this->allowHotlinking()) {
+            $this->dispRedImage();
+            return;
         }
+
         if (preg_match('@^https?://[^/]+@i', $this->src)) {
             $this->debug(2, 'Is a request for an external URL: ' . $this->src);
             $this->isExternalURL = true;
             if (!$this->isExternalImageAllowed()) {
-                return false;
+                return;
             }
         } else {
             $this->debug(2, 'Is a request for an internal file: ' . $this->src);
@@ -217,9 +215,9 @@ class timthumb
     {
         if (!$this->isExternalURL) {
             $this->debug(3, 'Got request for internal image. Starting serveInternalImage()');
-            $this->serveInternalImage();
-            return true;
+            return $this->serveInternalImage();
         }
+
         if (!config('allowedSites') || !config('allowExternal', true)) {
             $this->debug(
                 1,
@@ -228,18 +226,16 @@ class timthumb
             $this->error('You are not allowed to fetch images from an external website.');
             return false;
         }
-        $this->debug(3, 'Got request for external image. Starting serveExternalImage.');
 
         if (getv('webshot')) {
             return $this->handleWebshot();
         }
 
-        $this->debug(3, "webshot is NOT set so we're going to try to fetch a regular image.");
-        $this->serveExternalImage();
-        return true;
+        $this->debug(3, 'Got request for external image. Starting serveExternalImage.');
+        return $this->serveExternalImage();
     }
 
-    private function generateCacheFilePath($seedString) {
+    protected function generateCacheFilePath($seedString) {
         $cachefilePath = sprintf(
             '%s/%s%s%s%s',
             $this->cacheDirectory,
@@ -252,37 +248,32 @@ class timthumb
         return $cachefilePath;
     }
 
-    private function isExternalImageAllowed() {
+    protected function isExternalImageAllowed() {
         if (!config('allowedSites')) {
             $this->error('You are not allowed to fetch images from an external website.');
             return false;
         }
 
         $this->debug(2, 'Fetching only from selected external sites is enabled.');
-        $allowed = false;
-        foreach (config('allowedSites') as $site) {
-            $hostLower = strtolower($this->url['host']);
-            $siteLower = strtolower($site);
-            // Check if $siteLower is a substring at the end of $hostLower
-            $isSubString = strpos($hostLower, $siteLower) === strlen($hostLower) - strlen($siteLower);
-            if ($isSubString || $hostLower == '.' . $siteLower) {
-                $this->debug(3, sprintf('URL hostname %s matches %s so allowing.', $this->url['host'], $site));
-                $allowed = true;
+        foreach (config('allowedSites') as $allowedSite) {
+            $givenSite = parse_url(getv('src'))['host'];
+            $isMatch = preg_match(
+                sprintf('/^%1$s$|^\\.%1$s$/i', preg_quote($allowedSite, '/')),
+                $givenSite
+            );
+            if ($isMatch) {
+                $this->debug(3, sprintf('URL hostname %s matches %s so allowing.', $givenSite, $allowedSite));
+                return true;
             }
         }
-        if (!$allowed) {
-            $this->error(
-                'You may not fetch images from that site. To enable this site in timthumb, you can either add it to `allowedSites`.'
-            );
-            return false;
-        }
 
-        $this->debug(2, 'Fetching from all external sites is enabled.');
-        return true;
-
+        $this->error(
+            'You may not fetch images from that site. To enable this site in timthumb, you can either add it to `allowedSites`.'
+        );
+        return false;
     }
 
-    private function getCacheDirectory() {
+    protected function getCacheDirectory() {
         if (!config('fileCache.directory')) {
             return sys_get_temp_dir();
         }
@@ -301,6 +292,7 @@ class timthumb
             );
             return false;
         }
+
         return config('fileCache.directory');
     }
 
@@ -315,7 +307,9 @@ class timthumb
                 exit;
             }
 
-            $this->error('Additionally, the 404 image that is configured could not be found or there was an error serving it.');
+            $this->error(
+                'Additionally, the 404 image that is configured could not be found or there was an error serving it.'
+            );
         }
 
         if (config('errorImage')) {
@@ -885,8 +879,9 @@ class timthumb
 
     protected function getLocalImagePath($src)
     {
+        $docRoot = $this->calcDocRoot();
         $src = ltrim($src, '/'); //strip off the leading '/'
-        if (!$this->docRoot) {
+        if (!$docRoot) {
             $this->debug(
                 3,
                 "We have no document root set, so as a last resort, lets check if the image is in the current dir and serve that."
@@ -901,17 +896,17 @@ class timthumb
             );
         }
 
-        if (!is_dir($this->docRoot)) {
+        if (!is_dir($docRoot)) {
             $this->error("Server path does not exist. Ensure variable \$_SERVER['DOCUMENT_ROOT'] is set correctly");
         }
 
         //Do not go past this point without docRoot set
 
         //Try src under docRoot
-        if (is_file($this->docRoot . '/' . $src)) {
-            $this->debug(3, "Found file as " . $this->docRoot . '/' . $src);
-            $real = $this->realpath($this->docRoot . '/' . $src);
-            if (stripos($real, $this->docRoot) === 0) {
+        if (is_file($docRoot . '/' . $src)) {
+            $this->debug(3, "Found file as " . $docRoot . '/' . $src);
+            $real = $this->realpath($docRoot . '/' . $src);
+            if (stripos($real, $docRoot) === 0) {
                 return $real;
             }
 
@@ -922,10 +917,10 @@ class timthumb
         $absolute = $this->realpath('/' . $src);
         if ($absolute && is_file($absolute)) { //realpath does file_exists check, so can probably skip the exists check here
             $this->debug(3, "Found absolute path: $absolute");
-            if (!$this->docRoot) {
+            if (!$docRoot) {
                 $this->sanityFail("docRoot not set when checking absolute path.");
             }
-            if (stripos($absolute, $this->docRoot) === 0) {
+            if (stripos($absolute, $docRoot) === 0) {
                 return $absolute;
             }
 
@@ -933,28 +928,29 @@ class timthumb
             //and continue search
         }
 
-        $base = $this->docRoot;
-
         // account for Windows directory structure
         if (strpos(serverv('SCRIPT_FILENAME'), ':') !== false) {
-            $sub_directories = explode('\\', str_replace($this->docRoot, '', serverv('SCRIPT_FILENAME')));
+            $sub_directories = explode('\\', str_replace($docRoot, '', serverv('SCRIPT_FILENAME')));
         } else {
-            $sub_directories = explode('/', str_replace($this->docRoot, '', serverv('SCRIPT_FILENAME')));
+            $sub_directories = explode('/', str_replace($docRoot, '', serverv('SCRIPT_FILENAME')));
         }
 
+        $base = $docRoot;
         foreach ($sub_directories as $sub) {
             $base .= $sub . '/';
-            $this->debug(3, "Trying file as: " . $base . $src);
-            if (is_file($base . $src)) {
-                $this->debug(3, "Found file as: " . $base . $src);
-                $real = $this->realpath($base . $src);
-                if (stripos($real, $this->realpath($this->docRoot)) === 0) {
-                    return $real;
-                }
 
-                $this->debug(1, "Security block: The file specified occurs outside the document root.");
-                //And continue search
+            $this->debug(3, "Trying file as: " . $base . $src);
+            if (!is_file($base . $src)) {
+                continue;
             }
+
+            $this->debug(3, "Found file as: " . $base . $src);
+            $real = $this->realpath($base . $src);
+            if (stripos($real, $this->realpath($docRoot)) !== 0) {
+                $this->debug(1, "Security block: The file specified occurs outside the document root.");
+            }
+
+            return $real;
         }
         return false;
     }
@@ -1095,12 +1091,13 @@ class timthumb
             $this->error("The remote file is not a valid image. Mimetype = '" . $mimeType . "'" . $tempfile);
             return false;
         }
-        if ($this->processImageAndWriteToCache($tempfile)) {
-            $this->debug(3, "Image processed succesfully. Serving from cache");
-            return $this->serveCacheFile();
+
+        if (!$this->processImageAndWriteToCache($tempfile)) {
+            return false;
         }
 
-        return false;
+        $this->debug(3, "Image processed succesfully. Serving from cache");
+        return $this->serveCacheFile();
     }
 
     public function curlWrite($curlHandle, $data, $fileHandle)
@@ -1400,15 +1397,24 @@ class timthumb
         return $this->is404;
     }
 
+    protected function allowHotlinking()
+    {
+        if (!serverv('HTTP_REFERER')) {
+            return false;
+        }
+
+        $myhost = '@^https?://(?:www\.)?' . $this->myHost . '(?:$|/)@i';
+        if (!preg_match($myhost, serverv('HTTP_REFERER'))) {
+            return false;
+        }
+
+        return true;
+    }
+
     // base64 encoded red image that says 'no hotlinkers'
     // nothing to worry about! :)
     protected function dispRedImage()
     {
-        $myhost = '@^https?://(?:www\.)?' . $this->myHost . '(?:$|/)@i';
-        if (preg_match($myhost, serverv('HTTP_REFERER'))) {
-            return;
-        }
-
         $imgData = base64_decode("R0lGODlhUAAMAIAAAP8AAP///yH5BAAHAP8ALAAAAABQAAwAAAJpjI+py+0Po5y0OgAMjjv01YUZ\nOGplhWXfNa6JCLnWkXplrcBmW+spbwvaVr/cDyg7IoFC2KbYVC2NQ5MQ4ZNao9Ynzjl9ScNYpneb\nDULB3RP6JuPuaGfuuV4fumf8PuvqFyhYtjdoeFgAADs=");
         header('Content-Type: image/gif');
         header('Content-Length: ' . strlen($imgData));
