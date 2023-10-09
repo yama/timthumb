@@ -68,7 +68,7 @@ Filters are controlled through the 'f' query variable. By specifying parameters,
 Some filters require arguments such as color values or filter strength (amount of contrast, etc.), so you need to pass the filter ID followed by the arguments in a comma-separated list. For instance, the brightness filter (ID 3) requires one argument – so to set the brightness strength to 10, it would look like this:
 
 ```
-&f=1,10
+&f=3,10
 ```
 
 The image filters and arguments that are available are as follows:
@@ -90,7 +90,7 @@ The image filters and arguments that are available are as follows:
 You can chain multiple filters together. To do this, simply use the pipe character to separate multiple filters and pass the whole to TimThumb. For example, the following value applies a brightness of 10 to a grayscale image.
 
 ```
-&f=2|1,10
+&f=2|3,10
 ```
 
 ### s - Sharpen Image Filter
