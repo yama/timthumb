@@ -129,7 +129,7 @@ TimThumb not only provides the functionality to resize images but also has the a
 
 ## Part 5: Proportional Scaling
 
-The specified crop position (&a=*) was a highly requested feature, however, in practice, it lacked practicality, with most cases being adequately handled by the default `&a=c`.
+The specified crop position (&a=\*) was a highly requested feature, however, in practice, it lacked practicality, with most cases being adequately handled by the default `&a=c`.
 
 As the user base expanded, a feature that came into demand was proportional scaling in conjunction with cropping. To be honest, it took some time to understand what users were seeking with this new request. Ultimately, what was being asked for was to 'just right' scale the image to fit the necessary dimensions while maintaining the image's aspect ratio. Simple scaling alone led to issues like unsightly margins, aspect ratio distortion, unnatural cropping, etc., making it difficult to 'fit just right'.
 
@@ -190,7 +190,7 @@ The query string parameters are used to specify processing for each image, but t
     - Comment: Allowed external websites. Example: ['usercontent.google.com', 'img.youtube.com']
 - `browserCache`
     - `maxAge`
-        - Default: 60*60*24*10
+        - Default: 60\*60\*24\*10
         - Comment: Time to cache in the browser
     - `enable`
         - Default: true
@@ -200,10 +200,10 @@ The query string parameters are used to specify processing for each image, but t
         - Default: true
         - Comment: Should we store resized/modified images on disk to speed things up?
     - `timeBetweenCleans`
-        - Default: 60*60*24
+        - Default: 60\*60\*24
         - Comment: How often the cache is cleaned
     - `maxFileAge`
-        - Default: 60*60*24
+        - Default: 60\*60\*24
         - Comment: How old does a file have to be to be deleted from the cache
     - `suffix`
         - Default: '.cache'
