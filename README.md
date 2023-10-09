@@ -152,18 +152,18 @@ The new scaling modes added by the &zc parameter are as follows:
 
 ## Part 6: List of Parameters
 
-| Parameter | Origin           | Value                 | Description                                             |
-|-----------|------------------|-----------------------|------------------------------------------------------|
-| src       | source           | URL of the image      | Instructs TimThumb which image to resize             |
-| w         | width            | Width after resizing  | To scale proportionally, omit the width (height is required) |
-| h         | height           | Height after resizing | To scale proportionally, omit the height (width is required) |
-| q         | quality          | 0～100                | Compression quality. The higher the value, the better the image looks. It's not recommended to go above 95 as the image may become too large |
-| a         | alignment        | c, t, l, r, b, tl, tr, bl, br | Alignment for cropping. c = center, t = top, b = bottom, r = right, l = left. Positions can be combined to create diagonal positions |
-| zc        | zoom/crop        | 0, 1, 2, 3            | Changes settings for cropping and scaling            |
-| f         | filters          | Too many to mention   | Apply image filters to modify the resized image. For example, you can change brightness/contrast or blur the image |
-| s         | sharpen          |                       | Applying a sharp filter makes the resized image appear slightly sharper |
-| cc        | canvas colour    | Hex color value (#ffffff) | Changes the background color. Mostly used when changing zoom or trimming settings, and it might add borders to the image |
-| ct        | canvas transparency | True (1)          | Utilizes transparency, making the background color null |
+| Parameter | Value                       | Default | Description                                                       |
+|-----------|-----------------------------|---------|-------------------------------------------------------------------|
+| `src`     | URL of the image            |         | [source] Instructs TimThumb which image to resize                 |
+| `w`       | Width after resizing        | 200     | [width] To scale proportionally |
+| `h`       | Height after resizing       | 200     | [height] To scale proportionally |
+| `q`       | 0～100                      | 90      | [quality] Compression quality. Higher values mean better image quality but it's not recommended to go above 95 as the image may become too large |
+| `a`       | c, t, l, r, b, tl, tr, bl, br | c     | [alignment] Alignment for cropping with positions that can be combined for diagonal alignment <ul><li>c = center<li>t = top<li>b = bottom<li>r = right<li>l = left</ul> |
+| `zc`      | 0, 1, 2, 3                  | 1       | [zoom/crop] Settings for cropping and scaling                        |
+| `f`       | Too many to mention        | 0       | [filters] Apply image filters like brightness/contrast or blur to modify the resized image |
+| `s`       |                             | 0       | [sharpen] Applying a sharp filter makes the resized image appear slightly sharper |
+| `cc`      | Hex color value (#ffffff)  | ffffff  | [canvas colour] Changes the background color, useful when changing zoom or trimming settings, and might add borders to the image |
+| `ct`      | True (1)                    | 1       | [canvas transparency] Utilizes transparency, making the background color null |
 
 ## Part 7: Configuration
 
