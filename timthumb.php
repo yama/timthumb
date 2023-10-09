@@ -60,25 +60,9 @@ class CONF
             'pngcrushEnabled' => false,
             'pngcrushPath'    => '/usr/bin/pngcrush', //This will only run if `png.optipngPath` is not set or is not valid
         ],
-        'webshot' => [
-            'enabled'      => false, //Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
-            'cutyCapt'     => '/usr/local/bin/CutyCapt', //The path to CutyCapt.
-            'xvfb'         => '/usr/bin/xvfb-run', //The path to the Xvfb server
-            'screenX'      => '1024', //1024 works ok
-            'screenY'      => '768', //768 works ok
-            'colorDepth'   => '24', //I haven't tested anything besides 24
-            'imageFormat'  => 'png', //png is about 2.5 times the size of jpg but is a LOT better quality
-            'timeout'      => '20', //Seconds to wait for a webshot
-            'userAgent'    => "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0", //I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
-            'javascriptOn' => true, //Setting to false might give you a slight speedup and block ads. But it could cause other issues.
-            'javaOn'       => false, //Have only tested this as fase
-            'pluginsOn'    => true, //Enable flash and other plugins
-            'proxy'        => '', //In case you're behind a proxy server.
-            'xvfbRunning'  => false, //ADVANCED: Enable this if you've got Xvfb running in the background.
-        ],
 
         'waitBetweenFetchErrors' => 3600, // Time to wait between errors fetching remote file
-        'blockExternalLeechers'  => false, // If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
+        'blockExternalLeechers'  => false, // If the image is being loaded on an external site, display a red "No Hotlinking" gif.
         'notFoundImage'          => '', // Image to serve if any 404 occurs
         'errorImage'             => '', // Image to serve if an error occurs instead of showing error message
     ];
@@ -118,9 +102,7 @@ class timthumb
     protected $errors          = [];
     protected $toDeletes       = [];
     protected $cacheDirectory  = '';
-    protected $startTime       = 0;
     protected $lastBenchTime   = 0;
-    protected $cropTop         = false;
     //Generally if timthumb.php is modifed (upgraded) then the salt changes and all cache files are recreated. This is a backup mechanism to force regen.
     protected $fileCacheVersion = 1;
     //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
@@ -232,10 +214,6 @@ class timthumb
             return false;
         }
 
-        if (getv('webshot')) {
-            return $this->handleWebshot();
-        }
-
         $this->debug(3, 'Got request for external image. Starting serveExternalImage.');
         return $this->serveExternalImage();
     }
@@ -291,15 +269,17 @@ class timthumb
             }
         }
 
-        if (!touch(config('fileCache.directory') . '/index.html')) {
-            $this->error(
-                'Could not create the index.html file - to fix this create an empty file named index.html file in the cache directory.'
-            );
-            return false;
-        }
-        if (!$this->createHtaccessFile()) {
-            $this->error("Could not create the .htaccess file.");
-            return false;
+        if (config('fileCache.directory') !== sys_get_temp_dir()) {
+            if (!touch(config('fileCache.directory') . '/index.html')) {
+                $this->error(
+                    'Could not create the index.html file - to fix this create an empty file named index.html file in the cache directory.'
+                );
+                return false;
+            }
+            if (!$this->createHtaccessFile()) {
+                $this->error("Could not create the .htaccess file in the cache directory..");
+                return false;
+            }
         }
 
         return config('fileCache.directory');
@@ -311,12 +291,12 @@ class timthumb
         if (is_file($htaccessFilePath)) {
             return true;
         }
-        $htaccessContent = "
-            # Disable directory browsing
-            Options -Indexes
-            # Deny access to all files in this directory
-            Deny from all
-        ";
+        $htaccessContent =
+"# Disable directory browsing
+Options -Indexes
+# Deny access to all files in this directory
+Deny from all
+";
 
         return (bool) file_put_contents($htaccessFilePath, $htaccessContent);
     }
@@ -539,13 +519,13 @@ class timthumb
         }
 
         // get standard input properties
-        $new_width =  (int) abs(getv('w', 0));
-        $new_height = (int) abs(getv('h', 0));
-        $zoom_crop = (int) getv('zc', config('default.zc'));
-        $quality = (int) abs(getv('q', config('default.q')));
-        $align = $this->cropTop ? 't' : getv('a', 'c');
-        $filters = getv('f', config('default.f'));
-        $sharpen = (bool) getv('s', config('default.s'));
+        $new_width    = (int) abs(getv('w', 0));
+        $new_height   = (int) abs(getv('h', 0));
+        $zoom_crop    = (int) getv('zc', config('default.zc'));
+        $quality      = (int) abs(getv('q', config('default.q')));
+        $align        = getv('a', 'c');
+        $filters      = getv('f', config('default.f'));
+        $sharpen      = (bool) getv('s', config('default.s'));
         $canvas_color = ltrim(
             getv('cc', config('default.cc')),
             '#'
@@ -754,59 +734,56 @@ class timthumb
             imagetruecolortopalette($canvas, false, imagecolorstotal($image));
         }
 
-        $tempfile = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
+        $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
         if (preg_match('@^image/(?:jpg|jpeg)$@i', $mimeType)) {
             $imgType = 'jpg';
-            imagejpeg($canvas, $tempfile, $quality);
+            imagejpeg($canvas, $tempFilePath, $quality);
         } elseif (preg_match('@^image/png$@i', $mimeType)) {
             $imgType = 'png';
-            imagepng($canvas, $tempfile, floor($quality * 0.09));
+            imagepng($canvas, $tempFilePath, floor($quality * 0.09));
             if (config('png.optipngEnabled')) {
-                $this->handleOptiPng($tempfile);
+                $this->handleOptiPng($tempFilePath);
             } elseif (config('png.pngcrushEnabled')) {
-                $this->handlePngCrush($tempfile);
+                $this->handlePngCrush($tempFilePath);
             }
         } elseif (preg_match('@^image/gif$@i', $mimeType)) {
             $imgType = 'gif';
-            imagegif($canvas, $tempfile);
+            imagegif($canvas, $tempFilePath);
         } else {
             return $this->sanityFail("Could not match mime type after verifying it previously.");
         }
 
         $this->debug(3, "Rewriting image with security header.");
-        $tempfile4 = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
-        $context = stream_context_create();
-        $fp = fopen($tempfile, 'r', 0, $context);
+        $secureTempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
         file_put_contents(
-            $tempfile4,
+            $secureTempFilePath,
             $this->filePrependSecurityBlock . $imgType . ' ?' . '>'
         ); //6 extra bytes, first 3 being image type
         file_put_contents(
-            $tempfile4,
-            $fp,
+            $secureTempFilePath,
+            file_get_contents($tempFilePath, false, stream_context_create()),
             FILE_APPEND
         );
-        fclose($fp);
-        @unlink($tempfile);
+        @unlink($tempFilePath);
         $this->debug(3, "Locking and replacing cache file.");
         $lockFile = $this->cachefilePath . '.lock';
         $fh = fopen($lockFile, 'w');
         if (!$fh) {
-            @unlink($tempfile4);
+            @unlink($secureTempFilePath);
             return $this->error("Could not open the lockfile for writing an image.");
         }
-        if (flock($fh, LOCK_EX)) {
-            @unlink($this->cachefilePath); //rename generally overwrites, but doing this in case of platform specific quirks. File might not exist yet.
-            rename($tempfile4, $this->cachefilePath);
-            flock($fh, LOCK_UN);
+        if (!flock($fh, LOCK_EX)) {
             fclose($fh);
             @unlink($lockFile);
-        } else {
-            fclose($fh);
-            @unlink($lockFile);
-            @unlink($tempfile4);
+            @unlink($secureTempFilePath);
             return $this->error("Could not get a lock for writing.");
         }
+        @unlink($this->cachefilePath); //rename generally overwrites, but doing this in case of platform specific quirks. File might not exist yet.
+        rename($secureTempFilePath, $this->cachefilePath);
+        flock($fh, LOCK_UN);
+        fclose($fh);
+
+        @unlink($lockFile);
         $this->debug(3, "Done image replace with security header. Cleaning up and running cleanCache()");
         return true;
     }
@@ -984,102 +961,10 @@ class timthumb
         return preg_match('#^\.\./|/\.\./#', $path) ? realpath($path) : $path;
     }
 
-    protected function toDelete($name)
+    protected function toDelete($tempFilePath)
     {
-        $this->debug(3, "Scheduling file $name to delete on destruct.");
-        $this->toDeletes[] = $name;
-    }
-
-    protected function handleWebshot()
-    {
-        if (!config('webshot.enabled')) {
-            $this->error(
-                'You added the webshot parameter but webshots are disabled on this server. You need to set "webshotEnabled" == true to enable webshots.'
-            );
-            return false;
-        }
-
-        $this->debug(3, "webshot param is set, so we're going to take a webshot.");
-
-        $this->debug(3, "Starting handleWebshot");
-        $instr = "Please follow the instructions at https://code.google.com/p/timthumb/ to set your server up for taking website screenshots.";
-        if (!is_file(config('webshot.cutycapt'))) {
-            return $this->error("CutyCapt is not installed. $instr");
-        }
-        if (!is_file(config('webshot.xvfb'))) {
-            return $this->Error("Xvfb is not installed. $instr");
-        }
-        if (!preg_match('@^https?://[a-zA-Z0-9.\-]+@i', $this->src)) {
-            return $this->error("Invalid URL supplied.");
-        }
-        $cuty      = config('webshot.cutycapt');
-        $xv        = config('webshot.xvfb');
-        $screenX   = config('webshot.screenX');
-        $screenY   = config('webshot.screenY');
-        $colDepth  = config('webshot.colorDepth');
-        $format    = config('webshot.imageFormat');
-        $timeout   = config('webshot.timeout') * 1000;
-        $ua        = config('webshot.userAgent');
-        $jsOn      = config('webshot.javascriptOn') ? 'on' : 'off';
-        $javaOn    = config('webshot.javaOn') ? 'on' : 'off';
-        $pluginsOn = config('webshot.pluginsOn') ? 'on' : 'off';
-        $proxy     = config('webshot.proxy') ? ' --http-proxy=' . config('webshot.proxy') : '';
-        $tempfile  = tempnam($this->cacheDirectory, 'timthumb_webshot');
-        $url       = $this->src;
-        $url       = preg_replace('@[^A-Za-z0-9\-._:/?&+;=]+@', '', $url); //RFC 3986 plus ()$ chars to prevent exploit below. Plus the following are also removed: @*!~#[]',
-        // 2014 update by Mark Maunder: This exploit: https://cxsecurity.com/issue/WLB-2014060134
-        // uses the $(command) shell execution syntax to execute arbitrary shell commands as the web server user.
-        // So we're now filtering out the characters: '$', '(' and ')' in the above regex to avoid this.
-        // We are also filtering out chars rarely used in URLs but legal accoring to the URL RFC which might be exploitable. These include: @*!~#[]',
-        // We're doing this because we're passing this URL to the shell and need to make very sure it's not going to execute arbitrary commands.
-        if (config('webshot.xvfbRunning')) {
-            putenv('DISPLAY=:100.0');
-            $command = sprintf(
-                '%s %s --max-wait=%d --user-agent="%s" --javascript=%s --java=%s --plugins=%s --js-can-open-windows=off --url="%s" --out-format=%s --out=%s',
-                $cuty,
-                $proxy,
-                $timeout,
-                $ua,
-                $jsOn,
-                $javaOn,
-                $pluginsOn,
-                $url,
-                $format,
-                $tempfile
-            );
-        } else {
-            $command = sprintf(
-                '%s --server-args="-screen 0, %sx%sx%s" %s %s --max-wait=%d --user-agent="%s" --javascript=%s --java=%s --plugins=%s --js-can-open-windows=off --url="%s" --out-format=%s --out=%s',
-                $xv,
-                $screenX,
-                $screenY,
-                $colDepth,
-                $cuty,
-                $proxy,
-                $timeout,
-                $ua,
-                $jsOn,
-                $javaOn,
-                $pluginsOn,
-                $url,
-                $format,
-                $tempfile
-            );
-        }
-        $this->debug(3, "Executing command: $command");
-        $out = `$command`;
-        $this->debug(3, "Received output: $out");
-        if (!is_file($tempfile)) {
-            $this->set404();
-            return $this->error("The command to create a thumbnail failed.");
-        }
-        $this->cropTop = true;
-        if (!$this->processImageAndWriteToCache($tempfile)) {
-            return false;
-        }
-
-        $this->debug(3, "Image processed succesfully. Serving from cache");
-        return $this->serveCacheFile();
+        $this->debug(3, "Scheduling file $tempFilePath to delete on destruct.");
+        $this->toDeletes[] = $tempFilePath;
     }
 
     protected function serveExternalImage()
@@ -1088,11 +973,11 @@ class timthumb
             $this->error("Invalid URL supplied.");
             return false;
         }
-        $tempfile = tempnam($this->cacheDirectory, 'timthumb');
-        $this->debug(3, "Fetching external image into temporary file $tempfile");
-        $this->toDelete($tempfile);
+        $tempFilePath = tempnam($this->cacheDirectory, 'timthumb');
+        $this->debug(3, "Fetching external image into temporary file $tempFilePath");
+        $this->toDelete($tempFilePath);
         #fetch file here
-        if (!$this->fetchAndSaveImageFromUrl($this->src, $tempfile)) {
+        if (!$this->fetchAndSaveImageFromUrl($this->src, $tempFilePath)) {
             @unlink($this->cachefilePath);
             touch($this->cachefilePath);
             $this->debug(3, "Error fetching URL: " . $this->lastURLError);
@@ -1100,16 +985,16 @@ class timthumb
             return false;
         }
 
-        $mimeType = $this->getMimeType($tempfile);
+        $mimeType = $this->getMimeType($tempFilePath);
         if (!preg_match("@^image/(?:jpg|jpeg|gif|png)$@i", $mimeType)) {
             $this->debug(3, "Remote file has invalid mime type: $mimeType");
             @unlink($this->cachefilePath);
             touch($this->cachefilePath);
-            $this->error("The remote file is not a valid image. Mimetype = '" . $mimeType . "'" . $tempfile);
+            $this->error("The remote file is not a valid image. Mimetype = '" . $mimeType . "'" . $tempFilePath);
             return false;
         }
 
-        if (!$this->processImageAndWriteToCache($tempfile)) {
+        if (!$this->processImageAndWriteToCache($tempFilePath)) {
             return false;
         }
 
@@ -1304,7 +1189,7 @@ class timthumb
         return isset($units[$unit]) ? $size * $units[$unit] : $size;
     }
 
-    protected function fetchAndSaveImageFromUrl($url, $tempfile)
+    protected function fetchAndSaveImageFromUrl($url, $tempFilePath)
     {
         $this->lastURLError = false;
         $url = str_replace(' ', '%20', $url);
@@ -1314,9 +1199,9 @@ class timthumb
             $this->debug(3, "Fetching url with curl: $url");
 
             $curlHandle = curl_init($url);
-            $fileHandle = fopen($tempfile, 'wb');
+            $fileHandle = fopen($tempFilePath, 'wb');
             if (!$fileHandle) {
-                $this->error("Could not open $tempfile for writing.");
+                $this->error("Could not open $tempFilePath for writing.");
                 return false;
             }
 
@@ -1371,8 +1256,8 @@ class timthumb
             return false;
         }
 
-        if (!file_put_contents($tempfile, $img)) {
-            $this->error("Could not write to $tempfile.");
+        if (!file_put_contents($tempFilePath, $img)) {
+            $this->error("Could not write to $tempFilePath.");
             return false;
         }
 

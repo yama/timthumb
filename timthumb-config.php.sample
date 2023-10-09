@@ -17,12 +17,12 @@ return [
     // 'allowedSites'  => ['img.youtube.com','tinypic.com'],
     // 'fileCache' => [
     //     'maxFileAge' => 60*60*24,
-    //     'directory'  => './cache',
+    //     'directory'  => __DIR__ . '/cache',
     // ],
     // 'default' => [
     //     'q'      => 83,
-    //     'width'  => 300,
-    //     'height' => 300,
+    //     'w'  => 300,
+    //     'h' => 300,
     // ],
     // etc...
 ];
