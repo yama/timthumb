@@ -45,13 +45,13 @@ class CONF
         'maxWidth'      => 1920, // Maximum image width
         'maxHeight'     => 1920, // Maximum image height
         'default' => [
-            'q'      => 90, // Default image quality.
+            'q'      => 85, // Default image quality.
             'zc'     => 1, // Default zoom/crop setting.
             'f'      => '', // Default image filters.
             's'      => 0, // Default sharpen value.
             'cc'     => 'ffffff', // Default canvas colour.
-            'width'  => 200, // Default thumbnail width.
-            'height' => 200, // Default thumbnail height.
+            'w'      => 200, // Default thumbnail width.
+            'h'      => 200, // Default thumbnail height.
         ],
         'png' => [
             'isTransparent'   => false, // Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
@@ -534,8 +534,8 @@ class timthumb
 
         // set default width and height if neither are set already
         if ($new_width == 0 && $new_height == 0) {
-            $new_width = (int) config('default.width');
-            $new_height = (int) config('default.height');
+            $new_width = (int) config('default.w');
+            $new_height = (int) config('default.h');
         }
 
         // ensure size limits can not be abused
