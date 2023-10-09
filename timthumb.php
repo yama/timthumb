@@ -13,14 +13,19 @@
  *
  */
 
-const VERSION = '2.9.0'; // Version of this script
+// Do not execute the instance when it is being loaded from an external source
+if (__FILE__ !== serverv('SCRIPT_FILENAME')) {
+    return;
+}
 
 $timthumb = new timthumb();
 $timthumb->start();
 
-class CONF
+class timthumb
 {
-    public static $default = [
+    public $version = '2.9.0'; // Version of this script
+
+    public static $config = [
         'debug' => [
             'level'  => 1, // Debug level 1 is less noisy, while 3 is the most verbose. Set to 0 to disable
             'displayErrorMessages' => true, // Display error messages. Set to false to turn off errors (good for production websites)
@@ -67,28 +72,6 @@ class CONF
         'errorImage'             => '', // Image to serve if an error occurs instead of showing error message
     ];
 
-    public static function get() {
-        $path = sprintf('%s/%s-config.php', __DIR__, basename(__FILE__, '.php'));
-        if (is_file($path) && $customConfig = include $path) {
-            return self::mergeConfig(self::$default, $customConfig);
-        }
-        return self::defaultConfig();
-    }
-
-    private static function mergeConfig($default, $custom) {
-        foreach ($custom as $key => $value) {
-            if (is_array($value) && isset($default[$key]) && is_array($default[$key])) {
-                $default[$key] = self::mergeConfig($default[$key], $value);
-            } else {
-                $default[$key] = $value;
-            }
-        }
-        return $default;
-    }
-}
-
-class timthumb
-{
     protected $src             = '';
     protected $is404           = false;
     protected $docRoot         = '';
@@ -109,6 +92,25 @@ class timthumb
     protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //";
     protected $curlDataWritten = 0;
     protected $curlFH = null;
+
+    public static function mergedConfig() {
+        $path = sprintf('%s/%s-config.php', __DIR__, basename(__FILE__, '.php'));
+        if (is_file($path) && $customConfig = include $path) {
+            return static::mergeConfig(static::$config, $customConfig);
+        }
+        return static::defaultConfig();
+    }
+
+    private static function mergeConfig($default, $custom) {
+        foreach ($custom as $key => $value) {
+            if (is_array($value) && isset($default[$key]) && is_array($default[$key])) {
+                $default[$key] = static::mergeConfig($default[$key], $value);
+            } else {
+                $default[$key] = $value;
+            }
+        }
+        return $default;
+    }
 
     public function __construct()
     {
@@ -339,7 +341,7 @@ Deny from all
         echo '<h1>A TimThumb error has occured</h1>';
         echo 'The following error(s) occured:<br />' . $html . '<br />';
         echo '<br />Query String : ' . htmlentities(serverv('QUERY_STRING'), ENT_QUOTES);
-        echo '<br />TimThumb version : ' . VERSION . '</pre>';
+        echo '<br />TimThumb version : ' . $this->version . '</pre>';
 
         exit;
     }
@@ -1330,7 +1332,7 @@ Deny from all
 function config($key, $default = null) {
     static $config = null;
     if ($config === null) {
-        $config = CONF::get();
+        $config = timthumb::mergedConfig();
     }
     $keys = explode('.', $key);
     $value = $config;
