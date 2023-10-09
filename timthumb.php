@@ -297,8 +297,28 @@ class timthumb
             );
             return false;
         }
+        if (!$this->createHtaccessFile()) {
+            $this->error("Could not create the .htaccess file.");
+            return false;
+        }
 
         return config('fileCache.directory');
+    }
+
+    protected function createHtaccessFile()
+    {
+        $htaccessFilePath = config('fileCache.directory') . '/.htaccess';
+        if (is_file($htaccessFilePath)) {
+            return true;
+        }
+        $htaccessContent = "
+            # Disable directory browsing
+            Options -Indexes
+            # Deny access to all files in this directory
+            Deny from all
+        ";
+
+        return (bool) file_put_contents($htaccessFilePath, $htaccessContent);
     }
 
     protected function handleErrors()
