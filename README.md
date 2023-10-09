@@ -30,6 +30,10 @@ TimThumb can be used by just specifying the URL of the image. For example, it wo
 
 The following parameters are mainly used. With these, you can resize almost any size.
 
+```html
+<img src="/path/to/timthumb.php?src=/images/image.jpg&w=200&h=200&q=83" />
+```
+
 - `src` The only required parameter. Specifies the path to the image. You can also specify the URL of an image from an external site (※configuration required).
 - `w` and `h` Width and height. Optional. If omitted, it will be trimmed/resized to default dimensions (100 x 100).
 - `q` Quality. Specifies the compression level of the image. The default is 85. You can specify 100, but it won't make the image any larger or more beautiful than the original.
@@ -64,7 +68,7 @@ Filters are controlled through the 'f' query variable. By specifying parameters,
 Some filters require arguments such as color values or filter strength (amount of contrast, etc.), so you need to pass the filter ID followed by the arguments in a comma-separated list. For instance, the brightness filter (ID 3) requires one argument – so to set the brightness strength to 10, it would look like this:
 
 ```
-&f=1,10
+&f=3,10
 ```
 
 The image filters and arguments that are available are as follows:
@@ -86,7 +90,7 @@ The image filters and arguments that are available are as follows:
 You can chain multiple filters together. To do this, simply use the pipe character to separate multiple filters and pass the whole to TimThumb. For example, the following value applies a brightness of 10 to a grayscale image.
 
 ```
-&f=2|1,10
+&f=2|3,10
 ```
 
 ### s - Sharpen Image Filter
