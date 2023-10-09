@@ -171,145 +171,145 @@ The query string parameters are used to specify processing for each image, but t
 
 - `debug`
     - `level`
-        - Default Value: 1
+        - Default: 1
         - Comment: Debug level 1 is less noisy, while 3 is the most verbose. Set to 0 to disable
     - `displayErrorMessages`
-        - Default Value: true
+        - Default: true
         - Comment: Display error messages. Set to false to turn off errors (good for production websites)
 - `memoryLimit`
-    - Default Value: '30M'
+    - Default: '30M'
     - Comment: Set PHP memory limit
 - `maxFileSize`
-    - Default Value: 15728640
+    - Default: 15728640
     - Comment: 15 Megs is 15728640. This is the max internal or external file size that we'll process.
 - `curlTimeout`
-    - Default Value: 20
+    - Default: 20
     - Comment: Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
 - `allowedSites`
-    - Default Value: []
+    - Default: []
     - Comment: Allowed external websites. Example: ['usercontent.google.com', 'img.youtube.com']
 - `browserCache`
     - `maxAge`
-        - Default Value: 60*60*24*10
+        - Default: 60*60*24*10
         - Comment: Time to cache in the browser
     - `enable`
-        - Default Value: true
+        - Default: true
         - Comment: Use for testing if you want to disable all browser caching
 - `fileCache`
     - `enabled`
-        - Default Value: true
+        - Default: true
         - Comment: Should we store resized/modified images on disk to speed things up?
     - `timeBetweenCleans`
-        - Default Value: 60*60*24
+        - Default: 60*60*24
         - Comment: How often the cache is cleaned
     - `maxFileAge`
-        - Default Value: 60*60*24
+        - Default: 60*60*24
         - Comment: How old does a file have to be to be deleted from the cache
     - `suffix`
-        - Default Value: '.cache'
+        - Default: '.cache'
         - Comment: What to put at the end of all files in the cache directory so we can identify them
     - `prefix`
-        - Default Value: 'timthumb'
+        - Default: 'timthumb'
         - Comment: What to put at the beg of all files in the cache directory so we can identify them
     - `directory`
-        - Default Value: './cache'
+        - Default: './cache'
         - Comment: Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
 - `maxWidth`
-    - Default Value: 1920
+    - Default: 1920
     - Comment: Maximum image width
 - `maxHeight`
-    - Default Value: 1920
+    - Default: 1920
     - Comment: Maximum image height
 - `default`
     - `q`
-        - Default Value: 90
+        - Default: 90
         - Comment: Default image quality
     - `zc`
-        - Default Value: 1
+        - Default: 1
         - Comment: Default zoom/crop setting
     - `f`
-        - Default Value: ''
+        - Default: ''
         - Comment: Default image filters
     - `s`
-        - Default Value: 0
+        - Default: 0
         - Comment: Default sharpen value
     - `cc`
-        - Default Value: 'ffffff'
+        - Default: 'ffffff'
         - Comment: Default canvas colour
-    - `width`
-        - Default Value: 200
+    - `w`
+        - Default: 200
         - Comment: Default thumbnail width
-    - `height`
-        - Default Value: 200
+    - `h`
+        - Default: 200
         - Comment: Default thumbnail height
 - `png`
     - `isTransparent`
-        - Default Value: false
+        - Default: false
         - Comment: Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
     - `optipngEnabled`
-        - Default Value: false
+        - Default: false
         - Comment:
     - `optipngPath`
-        - Default Value: '/usr/bin/optipng'
+        - Default: '/usr/bin/optipng'
         - Comment: This will run first because it gives better compression than pngcrush.
     - `pngcrushEnabled`
-        - Default Value: false
+        - Default: false
         - Comment:
     - `pngcrushPath`
-        - Default Value: '/usr/bin/pngcrush'
+        - Default: '/usr/bin/pngcrush'
         - Comment: This will only run if `png.optipngPath` is not set or is not valid
 - `webshot`
     - `enabled`
-        - Default Value: false
+        - Default: false
         - Comment: Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
     - `cutyCapt`
-        - Default Value: '/usr/local/bin/CutyCapt'
+        - Default: '/usr/local/bin/CutyCapt'
         - Comment: The path to CutyCapt.
     - `xvfb`
-        - Default Value: '/usr/bin/xvfb-run'
+        - Default: '/usr/bin/xvfb-run'
         - Comment: The path to the Xvfb server
     - `screenX`
-        - Default Value: '1024'
+        - Default: '1024'
         - Comment: 1024 works ok
     - `screenY`
-        - Default Value: '768'
+        - Default: '768'
         - Comment: 768 works ok
     - `colorDepth`
-        - Default Value: '24'
+        - Default: '24'
         - Comment: I haven't tested anything besides 24
     - `imageFormat`
-        - Default Value: 'png'
+        - Default: 'png'
         - Comment: png is about 2.5 times the size of jpg but is a LOT better quality
     - `timeout`
-        - Default Value: '20'
+        - Default: '20'
         - Comment: Seconds to wait for a webshot
     - `userAgent`
-        - Default Value: "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0"
+        - Default: "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0"
         - Comment: I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
     - `javascriptOn`
-        - Default Value: true
+        - Default: true
         - Comment: Setting to false might give you a slight speedup and block ads. But it could cause other issues.
     - `javaOn`
-        - Default Value: false
+        - Default: false
         - Comment: Have only tested this as false
     - `pluginsOn`
-        - Default Value: true
+        - Default: true
         - Comment: Enable flash and other plugins
     - `proxy`
-        - Default Value: ''
+        - Default: ''
         - Comment: In case you're behind a proxy server.
     - `xvfbRunning`
-        - Default Value: false
+        - Default: false
         - Comment: ADVANCED: Enable this if you've got Xvfb running in the background.
 - `waitBetweenFetchErrors`
-    - Default Value: 3600
+    - Default: 3600
     - Comment: Time to wait between errors fetching remote file
 - `blockExternalLeechers`
-    - Default Value: false
+    - Default: false
     - Comment: If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
 - `notFoundImage`
-    - Default Value: ''
+    - Default: ''
     - Comment: Image to serve if any 404 occurs
 - `errorImage`
-    - Default Value: ''
+    - Default: ''
     - Comment: Image to serve if an error occurs instead of showing error message
