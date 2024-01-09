@@ -19,7 +19,9 @@ return [
     //     'maxFileAge' => 60*60*24,
     //     'directory'  => __DIR__ . '/cache',
     // ],
-    // 'default' => [
+    // Image to serve if any 404 occurs
+    // 'notFoundImage'          => '/images/not-found.png',
+// 'default' => [
     //     'q' => 83,
     //     'w' => 300,
     //     'h' => 300,

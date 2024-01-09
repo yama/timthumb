@@ -310,7 +310,8 @@ Deny from all
         }
 
         if (config('notFoundImage') && $this->is404()) {
-            if ($this->serveImg(config('notFoundImage'))) {
+            $this->localImagePath = $this->getLocalImagePath(config('notFoundImage'));
+            if ($this->serveImg($this->localImagePath)) {
                 exit;
             }
 
