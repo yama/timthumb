@@ -306,7 +306,7 @@ GD always decodes the whole original image before resizing it, so the time and m
 
 ### Let the web server send cached images (sendfile)
 
-By default every cached thumbnail is sent by PHP, so a page with 50 thumbnails uses 50 PHP requests. With `fileCache.sendfile`, PHP only checks the cache and the web server sends the file. The cache files are then stored as plain images, so the cache directory must not be publicly accessible (the default `.htaccess` blocks direct access on Apache; on nginx, keep it outside the document root or deny it).
+By default every cached thumbnail is sent by PHP, so a page with 50 thumbnails uses 50 PHP requests. With `fileCache.sendfile`, PHP only checks the cache and the web server sends the file. The cache files are then stored as plain images with the normal file permissions (umask), so that the web server can read them even if it runs as a different user than PHP-FPM. The cache directory must not be publicly accessible (the default `.htaccess` blocks direct access on Apache; on nginx, keep it outside the document root or deny it).
 
 Apache with [mod_xsendfile](https://tn123.org/mod_xsendfile/):
 

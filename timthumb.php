@@ -102,7 +102,7 @@ class timthumb
     protected $lastBenchTime   = 0;
     protected $debugLevel      = 0;
     protected $isBusy          = false;
-    protected $waitDeadline    = null;
+    protected $waitedSeconds   = 0.0;
     // The cache key contains $version and this number. Increase it to force all cache files to be recreated.
     protected $fileCacheVersion = 1;
     //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
@@ -302,7 +302,7 @@ class timthumb
      * Open and exclusively lock a lock file (blocking). The holder deletes the file in releaseLock(),
      * so a lock taken on a file that was deleted in the meantime is retried on the new file.
      * A retry only happens after another request has finished with the lock, so this always makes progress.
-     * Waiting is limited by waitDeadline(); after that the request fails as busy (503).
+     * Waiting is limited by waitFor(); after that the request fails as busy (503).
      * @return resource|false
      */
     protected function acquireLock($path)
@@ -312,13 +312,13 @@ class timthumb
             if (!$fh) {
                 return false;
             }
-            while (!flock($fh, LOCK_EX | LOCK_NB)) {
-                if (microtime(true) >= $this->waitDeadline()) {
-                    fclose($fh);
-                    $this->isBusy = true;
-                    return false;
-                }
-                usleep(mt_rand(20000, 50000));
+            $locked = $this->waitFor(function () use ($fh) {
+                return flock($fh, LOCK_EX | LOCK_NB);
+            });
+            if (!$locked) {
+                fclose($fh);
+                $this->isBusy = true;
+                return false;
             }
             $locked = fstat($fh);
             clearstatcache(true, $path);
@@ -332,16 +332,24 @@ class timthumb
     }
 
     /**
-     * The time until which this request may wait for other requests (the same image being generated, or a
-     * free processing slot). It starts with the first wait, so a request waits at most `processingWaitTimeout`
-     * seconds in total, not counting its own work.
+     * Call $attempt until it returns something other than false, sleeping in between.
+     * The time spent waiting here (for the same image being generated, or a free processing slot) is added up per
+     * request and limited to `processingWaitTimeout` in total; the request's own work (e.g. downloading) is not counted.
+     * @return mixed the result of $attempt, or false when the waiting time ran out
      */
-    protected function waitDeadline()
+    protected function waitFor(callable $attempt)
     {
-        if ($this->waitDeadline === null) {
-            $this->waitDeadline = microtime(true) + max(0, (float) config('processingWaitTimeout'));
+        $start = microtime(true);
+        $left  = max(0, (float) config('processingWaitTimeout')) - $this->waitedSeconds;
+        while (true) {
+            $result = $attempt();
+            $waited = microtime(true) - $start;
+            if ($result !== false || $waited >= $left) {
+                $this->waitedSeconds += $waited;
+                return $result;
+            }
+            usleep(mt_rand(20000, 60000));
         }
-        return $this->waitDeadline;
     }
 
     protected function releaseLock($fh, $path = null)
@@ -375,30 +383,24 @@ class timthumb
             $this->debug(1, 'Could not create the processing slot files, so processing without a limit.');
             return null;
         }
-        while (true) {
+        $slot = $this->waitFor(function () use ($handles) {
             foreach ($handles as $i => $fh) {
                 if ($fh && flock($fh, LOCK_EX | LOCK_NB)) {
-                    foreach ($handles as $j => $other) {
-                        if ($j !== $i && $other) {
-                            fclose($other);
-                        }
-                    }
-                    $this->debug(3, "Got processing slot $i");
-                    return $fh;
+                    return $i;
                 }
             }
-            if (microtime(true) >= $this->waitDeadline()) {
-                break;
-            }
-            usleep(mt_rand(30000, 80000));
-        }
-
-        foreach ($handles as $fh) {
-            if ($fh) {
+            return false;
+        });
+        foreach ($handles as $i => $fh) {
+            if ($fh && $i !== $slot) {
                 fclose($fh);
             }
         }
-        return false;
+        if ($slot === false) {
+            return false;
+        }
+        $this->debug(3, "Got processing slot $slot");
+        return $handles[$slot];
     }
 
     protected function generateCacheFilePath($seedString) {
@@ -951,6 +953,9 @@ Options -Indexes
 
         // Send the response to the visitor before the (possibly slow) directory scan.
         ignore_user_abort(true);
+        while (ob_get_level() > 0 && @ob_end_flush()) {
+            // send PHP's output buffers (e.g. `output_buffering`) first
+        }
         if (function_exists('fastcgi_finish_request')) {
             fastcgi_finish_request();
         } elseif (function_exists('litespeed_finish_request')) {
@@ -964,29 +969,50 @@ Options -Indexes
         if (!$dh) {
             return false;
         }
-        $suffix  = (string) config('fileCache.suffix');
-        $timeAgo = now() - config('fileCache.maxFileAge');
+        // Cache files (and lock files left by a crashed request) are named <prefix>_int_<md5><suffix>[.lock]
+        // (or _ext_); matching the name also works with an empty suffix and leaves other files alone.
+        $cachePattern = '/_(?:int|ext)_[0-9a-f]{32}' . preg_quote((string) config('fileCache.suffix'), '/') . '(\.lock)?$/';
+        $timeAgo      = now() - config('fileCache.maxFileAge');
         // The file of this request may still be read by the web server (sendfile), so it is kept.
         $current = $this->cachefilePath ? basename($this->cachefilePath) : '';
         while (($entry = readdir($dh)) !== false) {
             if ($entry === $current) {
                 continue;
             }
-            $isCacheFile = $suffix !== '' && (
-                substr($entry, -strlen($suffix)) === $suffix               // cache files
-                || substr($entry, -strlen($suffix) - 5) === $suffix . '.lock' // lock files left by a crashed request
-            );
+            $isCacheFile = preg_match($cachePattern, $entry, $m) === 1;
             if (!$isCacheFile && strpos($entry, 'timthumb_tmpimg_') !== 0) { // temporary files left by a crashed request
                 continue;
             }
             $file = $this->cacheDirectory . '/' . $entry;
-            if (@filemtime($file) < $timeAgo) {
-                $this->debug(3, "Deleting cache file $file older than max age");
+            if (@filemtime($file) >= $timeAgo) {
+                continue;
+            }
+            $this->debug(3, "Deleting cache file $file older than max age");
+            if ($isCacheFile && !empty($m[1])) {
+                $this->deleteUnusedLockFile($file);
+            } else {
                 @unlink($file);
             }
         }
         closedir($dh);
         return true;
+    }
+
+    /**
+     * Delete a lock file only if nobody holds it, in the same way releaseLock() does,
+     * so that cleaning never lets two requests generate the same image at once.
+     */
+    protected function deleteUnusedLockFile($file)
+    {
+        $fh = @fopen($file, 'r');
+        if (!$fh) {
+            return;
+        }
+        if (flock($fh, LOCK_EX | LOCK_NB)) {
+            @unlink($file);
+            flock($fh, LOCK_UN);
+        }
+        fclose($fh);
     }
 
     /**
@@ -1281,11 +1307,17 @@ Options -Indexes
         // Without sendfile, the file starts with a PHP guard followed by the 3 letter image type and the PHP
         // closing tag (6 bytes), so it can not be executed or served directly.
         $header = $this->sendfileMode() ? '' : $this->filePrependSecurityBlock . $imgType . ' ?' . '>';
-        if (!$tempFilePath || file_put_contents($tempFilePath, $header . $data) === false) {
+        // An array is written piece by piece, so the image data is not copied once more in memory.
+        if (!$tempFilePath || file_put_contents($tempFilePath, [$header, $data]) === false) {
             if ($tempFilePath) {
                 @unlink($tempFilePath);
             }
             return $this->error('Could not write the cache file.');
+        }
+        if ($this->sendfileMode()) {
+            // tempnam() creates the file readable by its owner only, but with sendfile the web server
+            // (often a different user than PHP-FPM) reads it, so use the normal permissions (umask).
+            @chmod($tempFilePath, 0666 & ~umask());
         }
         // rename() replaces the old file atomically (also on Windows), so readers always find a complete file.
         if (!rename($tempFilePath, $this->cachefilePath)) {
@@ -1301,12 +1333,18 @@ Options -Indexes
     protected function optimizePng($data)
     {
         $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
-        if (!$tempFilePath || file_put_contents($tempFilePath, $data) === false) {
+        if (!$tempFilePath) {
             return $data;
         }
-        if (config('png.optipngEnabled')) {
+        if (file_put_contents($tempFilePath, $data) === false) {
+            @unlink($tempFilePath);
+            return $data;
+        }
+        $optipng = config('png.optipngPath');
+        if (config('png.optipngEnabled') && $optipng && is_file($optipng)) {
             $this->handleOptiPng($tempFilePath);
         } elseif (config('png.pngcrushEnabled')) {
+            // also used when optipng is enabled but its path is not valid
             $this->handlePngCrush($tempFilePath);
         }
         $optimized = file_get_contents($tempFilePath);
@@ -1553,12 +1591,27 @@ Options -Indexes
             if (!$imgType) {
                 return false;
             }
-            $this->sendImageHeaders($imgType, null, $stat['mtime']);
-            if ($mode === 'x-accel-redirect') {
-                header('X-Accel-Redirect: ' . rtrim(config('fileCache.sendfileUri'), '/') . '/' . basename($this->cachefilePath));
-            } else {
-                header('X-Sendfile: ' . $this->cachefilePath);
+            // The web server opens the file after PHP is done, so do not hand over a file that a cache cleaning
+            // (in any request) may delete in the meantime: recreate it instead.
+            if (config('fileCache.timeBetweenCleans') >= 0) {
+                $maxAge = (int) config('fileCache.maxFileAge');
+                if ($stat['mtime'] < now() - $maxAge + min(60, intdiv(max(0, $maxAge), 2))) {
+                    $this->debug(3, 'Cache file is about to expire, so recreating it instead of using sendfile.');
+                    return false;
+                }
             }
+            if ($mode === 'x-accel-redirect') {
+                $header = 'X-Accel-Redirect: ' . rtrim(config('fileCache.sendfileUri'), '/') . '/' . basename($this->cachefilePath);
+            } else {
+                // The web server needs an absolute path (fileCache.directory may be relative).
+                $path = realpath($this->cachefilePath);
+                if ($path === false) {
+                    return false;
+                }
+                $header = 'X-Sendfile: ' . $path;
+            }
+            $this->sendImageHeaders($imgType, null, $stat['mtime']);
+            header($header);
             return true;
         }
 
@@ -1724,6 +1777,9 @@ Options -Indexes
     /**
      * Estimate the memory GD needs for the source image and the canvas.
      * A truecolor GD image uses about 4 bytes per pixel plus row overhead, so ~5 bytes per pixel is used.
+     * The output is encoded into an output buffer and then copied into a string; in the worst case
+     * (e.g. a PNG that does not compress) each is about as large as the raw canvas, so 2 x 4 bytes per
+     * output pixel are added.
      */
     protected function hasEnoughMemoryFor($srcWidth, $srcHeight, $dstWidth, $dstHeight)
     {
@@ -1734,7 +1790,7 @@ Options -Indexes
         // A missing destination dimension is computed later, so assume the configured maximum for it.
         $dstWidth  = $dstWidth ?: (int) config('maxWidth');
         $dstHeight = $dstHeight ?: (int) config('maxHeight');
-        $needed    = ($srcWidth * $srcHeight + $dstWidth * $dstHeight) * 5;
+        $needed    = $srcWidth * $srcHeight * 5 + $dstWidth * $dstHeight * (5 + 2 * 4);
         $available = $this->returnBytes($limit) - memory_get_usage();
         $this->debug(3, sprintf('Estimated memory needed: %d bytes, available: %d bytes', $needed, $available));
         return $needed < $available;
