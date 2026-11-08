@@ -35,6 +35,7 @@ class timthumb
         'curlTimeout'   => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
         // Allowed external websites. Hosts must match exactly; prefix with a dot to also allow subdomains.
         // Example: ['img.youtube.com', '.example.com'] allows img.youtube.com, example.com and *.example.com
+        // Only ports 80/443 are allowed unless the entry names a port, e.g. 'localhost:9000' (development).
         // Avoid allowing domains where anyone can create content (e.g. '.github.io', '.s3.amazonaws.com').
         'allowedSites'  => [],
         'allowPrivateIPs' => false, // Allow fetching from hosts that resolve to private/loopback/reserved IP addresses (e.g. an intranet image server)
@@ -293,14 +294,22 @@ class timthumb
         if (isset($parts['user']) || isset($parts['pass'])) {
             return false;
         }
-        if (isset($parts['port']) && !in_array((int) $parts['port'], [80, 443], true)) {
-            $this->debug(1, 'Blocked external URL on non-standard port: ' . $parts['port']);
-            return false;
-        }
         $givenSite = strtolower($parts['host']);
+        $givenPort = isset($parts['port'])
+            ? (int) $parts['port']
+            : (strtolower($parts['scheme']) === 'https' ? 443 : 80);
         foreach (config('allowedSites') as $allowedSite) {
             $allowedSite = strtolower(trim($allowedSite));
+            // An entry may specify a port ('localhost:9000'); otherwise only the standard ports 80/443 are allowed.
+            $allowedPorts = [80, 443];
+            if (preg_match('/^(.+):(\d+)$/', $allowedSite, $m) && strpos($m[1], ':') === false) {
+                $allowedSite  = $m[1];
+                $allowedPorts = [(int) $m[2]];
+            }
             if ($allowedSite === '' || $allowedSite === '.') {
+                continue;
+            }
+            if (!in_array($givenPort, $allowedPorts, true)) {
                 continue;
             }
             if ($allowedSite[0] === '.') {
