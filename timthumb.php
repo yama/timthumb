@@ -98,7 +98,7 @@ class timthumb
         if (is_file($path) && $customConfig = include $path) {
             return static::mergeConfig(static::$config, $customConfig);
         }
-        return static::defaultConfig();
+        return static::$config;
     }
 
     private static function mergeConfig($default, $custom) {
@@ -514,7 +514,7 @@ Deny from all
         $origWidth  = $sData[0] ?? null;
         $origHeight = $sData[1] ?? null;
         $origType   = $sData[2] ?? null;
-        $mimeType   = $sData['mime'] ?? null;
+        $mimeType   = $sData['mime'] ?? '';
 
         $this->debug(3, "Mime type of image is $mimeType");
         if (!preg_match('@^image/(?:gif|jpg|jpeg|png)$@i', $mimeType)) {
@@ -522,10 +522,10 @@ Deny from all
         }
 
         // get standard input properties
-        $new_width    = (int) abs(getv('w', 0));
-        $new_height   = (int) abs(getv('h', 0));
+        $new_width    = abs((int) getv('w', 0));
+        $new_height   = abs((int) getv('h', 0));
         $zoom_crop    = (int) getv('zc', config('default.zc'));
-        $quality      = (int) abs(getv('q', config('default.q')));
+        $quality      = abs((int) getv('q', config('default.q')));
         $align        = getv('a', 'c');
         $filters      = getv('f', config('default.f'));
         $sharpen      = (bool) getv('s', config('default.s'));
@@ -562,9 +562,9 @@ Deny from all
 
         // generate new w/h if not provided
         if ($new_width && !$new_height) {
-            $new_height = floor($height * ($new_width / $width));
+            $new_height = (int) floor($height * ($new_width / $width));
         } elseif ($new_height && !$new_width) {
-            $new_width = floor($width * ($new_height / $height));
+            $new_width = (int) floor($width * ($new_height / $height));
         }
 
         // scale down and add borders
@@ -573,9 +573,9 @@ Deny from all
             $final_height = $height * ($new_width / $width);
 
             if ($final_height > $new_height) {
-                $new_width = $width * ($new_height / $height);
+                $new_width = (int) round($width * ($new_height / $height));
             } else {
-                $new_height = $final_height;
+                $new_height = (int) round($final_height);
             }
         }
 
@@ -616,11 +616,11 @@ Deny from all
             $final_height = $height * ($new_width / $width);
 
             if ($final_height > $new_height) {
-                $new_width = $width * ($new_height / $height);
-                $origin_x = round(($new_width / 2) - ($new_width / 2));
+                $new_width = (int) round($width * ($new_height / $height));
+                $origin_x = (int) round(($new_width / 2) - ($new_width / 2));
             } else {
-                $new_height = $final_height;
-                $origin_y = round(($new_height / 2) - ($new_height / 2));
+                $new_height = (int) round($final_height);
+                $origin_y = (int) round(($new_height / 2) - ($new_height / 2));
             }
         }
 
@@ -706,14 +706,16 @@ Deny from all
             $filterList = explode('|', $filters);
             foreach ($filterList as $fl) {
                 $settings = explode(',', $fl);
-                if (!isset($imageFilters[$settings[0]])) {
+                $filterId = (int) $settings[0];
+                if (!isset($imageFilters[$filterId])) {
                     continue;
                 }
-                for ($i = 0; $i < 4; $i++) {
-                    $settings[$i] = isset($settings[$i]) ? (int)$settings[$i] : null;
-                }
-                $filter = $imageFilters[$settings[0]][0];
-                $args = array_slice($settings, 1);
+                [$filter, $argCount] = $imageFilters[$filterId];
+                // imagefilter() rejects extra arguments since PHP 8, so pass exactly the required number.
+                $args = array_map(
+                    'intval',
+                    array_pad(array_slice($settings, 1, $argCount), $argCount, 0)
+                );
                 imagefilter($canvas, $filter, ...$args);
             }
         }
@@ -743,7 +745,7 @@ Deny from all
             imagejpeg($canvas, $tempFilePath, $quality);
         } elseif (preg_match('@^image/png$@i', $mimeType)) {
             $imgType = 'png';
-            imagepng($canvas, $tempFilePath, floor($quality * 0.09));
+            imagepng($canvas, $tempFilePath, (int) floor($quality * 0.09));
             if (config('png.optipngEnabled')) {
                 $this->handleOptiPng($tempFilePath);
             } elseif (config('png.pngcrushEnabled')) {
@@ -1123,7 +1125,7 @@ Deny from all
             sprintf(
                 "TimThumb Debug line %d [%.6f : %.6f]: %s",
                 __LINE__,
-                (microtime(true) - serverv('REQUEST_TIME_FLOAT')),
+                (microtime(true) - (float) serverv('REQUEST_TIME_FLOAT', microtime(true))),
                 ($this->lastBenchTime ? microtime(true) - $this->lastBenchTime : 0),
                 $msg
             )
@@ -1222,16 +1224,16 @@ Deny from all
             $response = curl_exec($curlHandle);
             $httpStatus = curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
 
+            // curl_close() has had no effect since PHP 8.0 and is deprecated as of PHP 8.5.
+            // The handle is released automatically when $curlHandle goes out of scope.
             if ($response === false) {
                 $this->lastURLError = curl_error($curlHandle);
-                curl_close($curlHandle);
                 fclose($fileHandle);
                 return false;
             }
 
             if ($httpStatus == 302) {
                 $this->error("External Image is Redirecting. Try alternate image url");
-                curl_close($curlHandle);
                 fclose($fileHandle);
                 return false;
             }
@@ -1240,7 +1242,6 @@ Deny from all
                 $this->set404();
             }
 
-            curl_close($curlHandle);
             fclose($fileHandle);
             return true;
         }
@@ -1248,11 +1249,7 @@ Deny from all
         $img = @file_get_contents($url);
         if ($img === false) {
             $err = error_get_last();
-            $this->lastURLError
-                = (!is_array($err) || !$err['message'])
-                    ? $err
-                    : $err['message']
-            ;
+            $this->lastURLError = !empty($err['message']) ? $err['message'] : 'Unknown error';
             if (strpos($this->lastURLError, '404') !== false) {
                 $this->set404();
             }
@@ -1348,7 +1345,8 @@ function config($key, $default = null) {
 
 function getv($key, $default = '')
 {
-    if (!isset($_GET[$key])) {
+    // Ignore array input such as ?w[]=1 to avoid TypeErrors in string/number functions.
+    if (!isset($_GET[$key]) || !is_string($_GET[$key])) {
         return $default;
     }
     return $_GET[$key];
