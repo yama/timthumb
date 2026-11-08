@@ -965,8 +965,10 @@ Options -Indexes
             return false;
         }
         // Cache files (and lock files left by a crashed request) are named <prefix>_int_<md5><suffix>[.lock]
-        // (or _ext_); matching the name also works with an empty suffix and leaves other files alone.
-        $cachePattern = '/_(?:int|ext)_[0-9a-f]{32}' . preg_quote((string) config('fileCache.suffix'), '/') . '(\.lock)?$/';
+        // (or _ext_); matching the whole name also works with an empty suffix and leaves other files alone,
+        // including those of another installation that uses a different prefix in a shared directory.
+        $cachePattern = '/^' . preg_quote((string) config('fileCache.prefix'), '/')
+            . '_(?:int|ext)_[0-9a-f]{32}' . preg_quote((string) config('fileCache.suffix'), '/') . '(\.lock)?$/';
         $timeAgo      = now() - config('fileCache.maxFileAge');
         while (($entry = readdir($dh)) !== false) {
             $isCacheFile = preg_match($cachePattern, $entry, $m) === 1;
@@ -999,7 +1001,14 @@ Options -Indexes
             return;
         }
         if (flock($fh, LOCK_EX | LOCK_NB)) {
-            @unlink($file);
+            // The file may have been replaced since it was opened (released and created again by another
+            // request); only delete it if the path still points to the file that is locked here.
+            $locked = fstat($fh);
+            clearstatcache(true, $file);
+            $current = @stat($file);
+            if ($current && $locked['ino'] === $current['ino'] && $locked['dev'] === $current['dev']) {
+                @unlink($file);
+            }
             flock($fh, LOCK_UN);
         }
         fclose($fh);
