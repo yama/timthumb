@@ -229,12 +229,6 @@ The query string parameters are used to specify processing for each image, but t
     - `directory`
         - Default: \_\_DIR\_\_ . '/cache'
         - Comment: Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
-    - `sendfile`
-        - Default: ''
-        - Comment: Let the web server send cached images instead of PHP: '' (off), 'X-Sendfile' (Apache mod_xsendfile, lighttpd) or 'X-Accel-Redirect' (nginx). See "Performance" below
-    - `sendfileUri`
-        - Default: ''
-        - Comment: For 'X-Accel-Redirect': the internal nginx location that maps to the cache directory, e.g. '/timthumb-cache/'
 - `maxWidth`
     - Default: 1920
     - Comment: Maximum image width
@@ -303,31 +297,3 @@ TimThumb is often used for pages with dozens of thumbnails, so each request shou
 ### Keep the original images reasonably small
 
 GD always decodes the whole original image before resizing it, so the time and memory needed depend on the size of the original, not of the thumbnail: a 24 megapixel photo needs about 120MB of memory and noticeably more CPU time than a 2 megapixel one. If you upload photos straight from a camera, resize them to the largest size you actually display (e.g. 2000 pixels on the long side) before using them with TimThumb.
-
-### Let the web server send cached images (sendfile)
-
-By default every cached thumbnail is sent by PHP, so a page with 50 thumbnails uses 50 PHP requests. With `fileCache.sendfile`, PHP only checks the cache and the web server sends the file. The cache files are then stored as plain images with the normal file permissions (umask), so that the web server can read them even if it runs as a different user than PHP-FPM. The cache directory must not be publicly accessible (the default `.htaccess` blocks direct access on Apache; on nginx, keep it outside the document root or deny it).
-
-Apache with [mod_xsendfile](https://tn123.org/mod_xsendfile/):
-
-```apache
-XSendFile On
-XSendFilePath /path/to/timthumb/cache
-```
-
-```php
-'fileCache' => ['sendfile' => 'X-Sendfile'],
-```
-
-nginx:
-
-```nginx
-location /timthumb-cache/ {
-    internal;
-    alias /path/to/timthumb/cache/;
-}
-```
-
-```php
-'fileCache' => ['sendfile' => 'X-Accel-Redirect', 'sendfileUri' => '/timthumb-cache/'],
-```

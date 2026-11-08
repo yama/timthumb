@@ -53,10 +53,6 @@ class timthumb
             'suffix'            => '.cache', // What to put at the end of all files in the cache directory so we can identify them
             'prefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
             'directory'         => __DIR__ . '/cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
-            // Let the web server send cached images instead of PHP: '' (off), 'X-Sendfile' (Apache mod_xsendfile, lighttpd) or 'X-Accel-Redirect' (nginx).
-            // Cache files are then stored as plain images, so keep the cache directory out of public access.
-            'sendfile'          => '',
-            'sendfileUri'       => '', // For X-Accel-Redirect: the internal nginx location that maps to the cache directory, e.g. '/timthumb-cache/'
         ],
         'maxWidth'      => 1920, // Maximum image width
         'maxHeight'     => 1920, // Maximum image height
@@ -219,7 +215,6 @@ class timthumb
             config('png'),
             config('maxWidth'),
             config('maxHeight'),
-            $this->sendfileMode(), // plain image files when sendfile is used, files with a PHP guard otherwise
         ];
         return serialize($params);
     }
@@ -973,12 +968,7 @@ Options -Indexes
         // (or _ext_); matching the name also works with an empty suffix and leaves other files alone.
         $cachePattern = '/_(?:int|ext)_[0-9a-f]{32}' . preg_quote((string) config('fileCache.suffix'), '/') . '(\.lock)?$/';
         $timeAgo      = now() - config('fileCache.maxFileAge');
-        // The file of this request may still be read by the web server (sendfile), so it is kept.
-        $current = $this->cachefilePath ? basename($this->cachefilePath) : '';
         while (($entry = readdir($dh)) !== false) {
-            if ($entry === $current) {
-                continue;
-            }
             $isCacheFile = preg_match($cachePattern, $entry, $m) === 1;
             if (!$isCacheFile && strpos($entry, 'timthumb_tmpimg_') !== 0) { // temporary files left by a crashed request
                 continue;
@@ -1304,20 +1294,15 @@ Options -Indexes
 
         $this->debug(3, "Writing the cache file.");
         $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
-        // Without sendfile, the file starts with a PHP guard followed by the 3 letter image type and the PHP
-        // closing tag (6 bytes), so it can not be executed or served directly.
-        $header = $this->sendfileMode() ? '' : $this->filePrependSecurityBlock . $imgType . ' ?' . '>';
+        // The file starts with a PHP guard followed by the 3 letter image type and the PHP closing tag (6 bytes),
+        // so it can not be executed or served directly.
+        $header = $this->filePrependSecurityBlock . $imgType . ' ?' . '>';
         // An array is written piece by piece, so the image data is not copied once more in memory.
         if (!$tempFilePath || file_put_contents($tempFilePath, [$header, $data]) === false) {
             if ($tempFilePath) {
                 @unlink($tempFilePath);
             }
             return $this->error('Could not write the cache file.');
-        }
-        if ($this->sendfileMode()) {
-            // tempnam() creates the file readable by its owner only, but with sendfile the web server
-            // (often a different user than PHP-FPM) reads it, so use the normal permissions (umask).
-            @chmod($tempFilePath, 0666 & ~umask());
         }
         // rename() replaces the old file atomically (also on Windows), so readers always find a complete file.
         if (!rename($tempFilePath, $this->cachefilePath)) {
@@ -1583,38 +1568,6 @@ Options -Indexes
         }
         $stat = fstat($fp);
 
-        $mode = $this->sendfileMode();
-        if ($mode) {
-            // Plain image file: the web server sends it, PHP only needs its type.
-            $imgType = $this->detectImageType((string) fread($fp, 8));
-            fclose($fp);
-            if (!$imgType) {
-                return false;
-            }
-            // The web server opens the file after PHP is done, so do not hand over a file that a cache cleaning
-            // (in any request) may delete in the meantime: recreate it instead.
-            if (config('fileCache.timeBetweenCleans') >= 0) {
-                $maxAge = (int) config('fileCache.maxFileAge');
-                if ($stat['mtime'] < now() - $maxAge + min(60, intdiv(max(0, $maxAge), 2))) {
-                    $this->debug(3, 'Cache file is about to expire, so recreating it instead of using sendfile.');
-                    return false;
-                }
-            }
-            if ($mode === 'x-accel-redirect') {
-                $header = 'X-Accel-Redirect: ' . rtrim(config('fileCache.sendfileUri'), '/') . '/' . basename($this->cachefilePath);
-            } else {
-                // The web server needs an absolute path (fileCache.directory may be relative).
-                $path = realpath($this->cachefilePath);
-                if ($path === false) {
-                    return false;
-                }
-                $header = 'X-Sendfile: ' . $path;
-            }
-            $this->sendImageHeaders($imgType, null, $stat['mtime']);
-            header($header);
-            return true;
-        }
-
         $securityBlockSize = strlen($this->filePrependSecurityBlock);
         $headerSize        = $securityBlockSize + 6;
         fseek($fp, $securityBlockSize, SEEK_SET);
@@ -1630,44 +1583,12 @@ Options -Indexes
         return true;
     }
 
-    /**
-     * The sendfile header to use ('x-sendfile' or 'x-accel-redirect'), or '' when PHP sends the files itself.
-     */
-    protected function sendfileMode()
-    {
-        $mode = strtolower(trim((string) config('fileCache.sendfile')));
-        if ($mode === 'x-sendfile') {
-            return $mode;
-        }
-        if ($mode === 'x-accel-redirect' && config('fileCache.sendfileUri')) {
-            return $mode;
-        }
-        return '';
-    }
-
-    protected function detectImageType($bytes)
-    {
-        if (strncmp($bytes, "\xFF\xD8\xFF", 3) === 0) {
-            return 'jpg';
-        }
-        if (strncmp($bytes, "\x89PNG", 4) === 0) {
-            return 'png';
-        }
-        if (strncmp($bytes, 'GIF8', 4) === 0) {
-            return 'gif';
-        }
-        return '';
-    }
-
     protected function cacheFileMTime()
     {
         clearstatcache(true, $this->cachefilePath);
         return @filemtime($this->cachefilePath) ?: now();
     }
 
-    /**
-     * @param int|null $dataSize Content-Length, or null to leave it to the web server (sendfile)
-     */
     protected function sendImageHeaders($mimeType, $dataSize, $mtime)
     {
         if (!preg_match('@^image/@i', $mimeType)) {
@@ -1679,10 +1600,8 @@ Options -Indexes
         $gmdate_expires = gmdate('D, d M Y H:i:s', now() + (int) config('browserCache.maxAge')) . ' GMT';
         // send content headers then display image
         header('Content-Type: ' . $mimeType);
-        if ($dataSize !== null) {
-            header('Accept-Ranges: none'); //Changed this because we don't accept range requests
-            header('Content-Length: ' . $dataSize);
-        }
+        header('Accept-Ranges: none'); //Changed this because we don't accept range requests
+        header('Content-Length: ' . $dataSize);
         $etag = '"' . $mtime . '"';
         header(sprintf('ETag: %s', $etag));
         if (!config('browserCache.enable')) {
