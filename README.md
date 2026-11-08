@@ -16,7 +16,9 @@ In this post, I will explain the basic usage of the script, namely the minimal p
 
 ### Basic Setup
 
-Requirements: PHP 7.4 or later with the GD extension (curl is recommended for external images).
+Requirements: PHP 7.4 or later with the GD extension. External images (`allowedSites`) also require the curl extension; without it, external images are refused.
+
+Errors are returned as an image (PNG) so they are visible where the thumbnail is embedded with `<img>`. With `displayErrorMessages` set to false, the image only says "Image error".
 
 Setting up TimThumb is very easy. All you need to do is place 'timthumb.php' on your server. Although a directory is needed to save the cache files, this will be automatically generated when you run timthumb for the first time. If it doesn't get generated, create a directory manually named 'cache' and set the permissions to 775.
 
@@ -179,7 +181,7 @@ The query string parameters are used to specify processing for each image, but t
         - Comment: Debug level (written to the PHP error log). 1 is less noisy, while 3 is the most verbose. Set to 0 to disable
     - `displayErrorMessages`
         - Default: true
-        - Comment: Display error messages. Set to false to turn off errors (good for production websites)
+        - Comment: Show error details in the error image. Set to false to show only a generic error image (good for production websites)
 - `memoryLimit`
     - Default: '256M'
     - Comment: Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
@@ -188,7 +190,7 @@ The query string parameters are used to specify processing for each image, but t
     - Comment: 15 Megs is 15728640. This is the max internal or external file size that we'll process.
 - `curlTimeout`
     - Default: 20
-    - Comment: Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
+    - Comment: Timeout in seconds for fetching external images. External images require the PHP curl extension.
 - `allowedSites`
     - Default: []
     - Comment: Allowed external websites. Hosts must match exactly; prefix an entry with a dot to also allow its subdomains (e.g. '.example.com' allows example.com and img.example.com). Only http/https on the default ports (80/443) are fetched unless the entry names a port (e.g. 'localhost:9000' for a development image server; such a host usually also needs `allowPrivateIPs`), and redirects are only followed to allowed sites. Avoid allowing domains where anyone can publish content (e.g. '.github.io', '.s3.amazonaws.com'). Example: ['img.youtube.com', '.example.com']
@@ -276,4 +278,4 @@ The query string parameters are used to specify processing for each image, but t
     - Comment: Image to serve if any 404 occurs
 - `errorImage`
     - Default: ''
-    - Comment: Image to serve if an error occurs instead of showing error message
+    - Comment: Image to serve if an error occurs instead of the generated error image
