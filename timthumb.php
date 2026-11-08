@@ -28,11 +28,11 @@ class timthumb
     public static $config = [
         'debug' => [
             'level'  => 0, // Debug level (written to error_log). 1 is less noisy, while 3 is the most verbose. 0 disables it
-            'displayErrorMessages' => true, // Display error messages. Set to false to turn off errors (good for production websites)
+            'displayErrorMessages' => true, // Show error details in the error image. Set to false to show only a generic error image (good for production websites)
         ],
         'memoryLimit'   => '256M', // Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
         'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
-        'curlTimeout'   => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
+        'curlTimeout'   => 20, // Timeout in seconds for fetching external images. External images require the PHP curl extension.
         // Allowed external websites. Hosts must match exactly; prefix with a dot to also allow subdomains.
         // Example: ['img.youtube.com', '.example.com'] allows img.youtube.com, example.com and *.example.com
         // Only ports 80/443 are allowed unless the entry names a port, e.g. 'localhost:9000' (development).
@@ -77,7 +77,7 @@ class timthumb
         'waitBetweenFetchErrors' => 3600, // Time to wait between errors fetching remote file
         'blockExternalLeechers'  => false, // If the image is being loaded on an external site, display a red "No Hotlinking" gif.
         'notFoundImage'          => '', // Image to serve if any 404 occurs
-        'errorImage'             => '', // Image to serve if an error occurs instead of showing error message
+        'errorImage'             => '', // Image to serve if an error occurs instead of the generated error image
     ];
 
     protected $src             = '';
@@ -267,6 +267,12 @@ class timthumb
             return false;
         }
 
+        // Without curl the checked address can not be pinned (DNS rebinding), so external images are not supported.
+        if (!extension_loaded('curl')) {
+            $this->error('External images require the PHP curl extension, which is not loaded.');
+            return false;
+        }
+
         if ($this->isAllowedSiteUrl($this->src)) {
             return true;
         }
@@ -385,7 +391,7 @@ class timthumb
         }
         // Every address must be public, otherwise a round-robin record could still reach an internal host.
         foreach ($ips as $ip) {
-            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+            if (!$this->isPublicIp($ip)) {
                 $this->debug(1, sprintf('Blocked external URL: %s resolves to non-public address %s', $host, $ip));
                 return false;
             }
@@ -396,6 +402,59 @@ class timthumb
             }
         }
         return $ips[0];
+    }
+
+    /**
+     * Whether an IP address is publicly routable.
+     * IPv6 addresses that embed an IPv4 address (IPv4-mapped, IPv4-compatible, NAT64) are checked as that IPv4 address,
+     * and ranges the filter flags do not cover on every PHP version (e.g. CGNAT 100.64.0.0/10) are blocked explicitly.
+     */
+    protected function isPublicIp($ip)
+    {
+        $bin = @inet_pton($ip);
+        if ($bin === false) {
+            return false;
+        }
+        if (strlen($bin) === 16) {
+            $prefix = substr($bin, 0, 12);
+            if ($prefix === str_repeat("\0", 10) . "\xff\xff"                   // ::ffff:a.b.c.d
+                || $prefix === str_repeat("\0", 12)                             // ::a.b.c.d (also :: and ::1)
+                || $prefix === "\x00\x64\xff\x9b" . str_repeat("\0", 8)        // 64:ff9b::a.b.c.d (NAT64)
+            ) {
+                $bin = substr($bin, 12);
+                $ip  = inet_ntop($bin);
+            }
+        }
+
+        $flags = FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE;
+        if (defined('FILTER_FLAG_GLOBAL_RANGE')) {
+            $flags |= FILTER_FLAG_GLOBAL_RANGE; // PHP 8.2+
+        }
+        if (!filter_var($ip, FILTER_VALIDATE_IP, $flags)) {
+            return false;
+        }
+
+        $blocked = strlen($bin) === 4
+            ? ['0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16', '172.16.0.0/12',
+               '192.0.0.0/24', '192.168.0.0/16', '198.18.0.0/15', '224.0.0.0/4', '240.0.0.0/4']
+            : ['::/127', 'fc00::/7', 'fe80::/10', 'ff00::/8'];
+        foreach ($blocked as $cidr) {
+            list($net, $bits) = explode('/', $cidr);
+            $netBin = inet_pton($net);
+            $bytes  = intdiv((int) $bits, 8);
+            $rest   = (int) $bits % 8;
+            if (substr($bin, 0, $bytes) !== substr($netBin, 0, $bytes)) {
+                continue;
+            }
+            if ($rest === 0) {
+                return false;
+            }
+            $mask = (0xff << (8 - $rest)) & 0xff;
+            if ((ord($bin[$bytes]) & $mask) === (ord($netBin[$bytes]) & $mask)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     protected function getCacheDirectory() {
@@ -476,6 +535,12 @@ Options -Indexes
             );
         }
 
+        // timthumb is usually embedded with <img>, where an HTML error page is invisible, so draw the errors as an image.
+        if ($this->serveErrorImage($status)) {
+            exit;
+        }
+
+        // GD is not available: fall back to a plain HTML error page.
         http_response_code($status);
         if (!config('debug.displayErrorMessages')) {
             exit;
@@ -491,6 +556,86 @@ Options -Indexes
         echo '<br />TimThumb version : ' . $this->version;
 
         exit;
+    }
+
+    /**
+     * Draw the collected errors into a PNG and send it.
+     * With `debug.displayErrorMessages` off, only a generic message is drawn so no details leak.
+     * The image uses the requested `w` / `h` (within `maxWidth` / `maxHeight`) so the page layout is kept.
+     */
+    protected function serveErrorImage($status)
+    {
+        if (!extension_loaded('gd') || !function_exists('imagepng')) {
+            return false;
+        }
+
+        $font       = 2;
+        $charWidth  = imagefontwidth($font);
+        $lineHeight = imagefontheight($font) + 2;
+        $padding    = 6;
+
+        $reqWidth  = (int) getv('w', 0);
+        $reqHeight = (int) getv('h', 0);
+        $width     = min($reqWidth > 0 ? max(16, $reqWidth) : 400, max(16, (int) config('maxWidth')));
+
+        if (config('debug.displayErrorMessages')) {
+            $messages = array_merge(['TimThumb error:'], $this->errors);
+        } else {
+            $messages = ['Image error'];
+        }
+        $perLine = max(1, intdiv($width - 2 * $padding, $charWidth));
+        $lines   = [];
+        foreach ($messages as $message) {
+            // The built-in GD font only covers ASCII.
+            $message = preg_replace('/[^\x20-\x7e]/', '?', trim((string) $message));
+            foreach (explode("\n", wordwrap($message, $perLine, "\n", true)) as $line) {
+                $lines[] = $line;
+            }
+        }
+
+        $textHeight = count($lines) * $lineHeight + 2 * $padding;
+        $height     = min(
+            $reqHeight > 0 ? max(16, $reqHeight) : max(100, $textHeight),
+            max(16, (int) config('maxHeight'))
+        );
+
+        // The error may itself be caused by low memory, so do not risk a fatal error while drawing it.
+        if (!$this->hasEnoughMemoryFor(0, 0, $width, $height)) {
+            return false;
+        }
+
+        $image = imagecreatetruecolor($width, $height);
+        if (!$image) {
+            return false;
+        }
+        $background = imagecolorallocate($image, 0xf8, 0xd7, 0xda);
+        $border     = imagecolorallocate($image, 0xc0, 0x39, 0x2b);
+        $text       = imagecolorallocate($image, 0x72, 0x1c, 0x24);
+        imagefilledrectangle($image, 0, 0, $width - 1, $height - 1, $background);
+        imagerectangle($image, 0, 0, $width - 1, $height - 1, $border);
+        $y = $padding;
+        foreach ($lines as $line) {
+            if ($y + $lineHeight > $height - $padding + 2) {
+                break;
+            }
+            imagestring($image, $font, $padding, $y, $line, $text);
+            $y += $lineHeight;
+        }
+
+        ob_start();
+        imagepng($image);
+        $png = ob_get_clean();
+        if ($png === false || $png === '') {
+            return false;
+        }
+
+        http_response_code($status);
+        header('Content-Type: image/png');
+        header('Content-Length: ' . strlen($png));
+        header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+        header('Pragma: no-cache');
+        echo $png;
+        return true;
     }
 
     /**
@@ -1410,56 +1555,9 @@ Options -Indexes
             return false;
         }
 
-        $url = $this->buildSafeUrl($url);
-        if ($url === false) {
-            $this->lastURLError = ' Invalid URL supplied.';
-            return false;
-        }
-        // Without curl the resolved address can not be pinned, so this check is best-effort only.
-        if ($this->resolvePublicIp($url) === false) {
-            $this->lastURLError = ' The host resolves to a private or reserved IP address.';
-            return false;
-        }
-        $context = stream_context_create([
-            'http' => [
-                'follow_location' => 0,
-                'timeout'         => config('curlTimeout'),
-                'ignore_errors'   => true,
-            ],
-        ]);
-        // Read the response headers from the stream metadata instead of $http_response_header,
-        // which is deprecated as of PHP 8.5 (merely mentioning it emits a compile-time notice).
-        $img     = false;
-        $headers = [];
-        $fp = @fopen($url, 'rb', false, $context);
-        if ($fp) {
-            $meta    = stream_get_meta_data($fp);
-            $headers = isset($meta['wrapper_data']) && is_array($meta['wrapper_data']) ? $meta['wrapper_data'] : [];
-            $img     = stream_get_contents($fp, config('maxFileSize') + 1);
-            fclose($fp);
-        }
-        $status = isset($headers[0]) && preg_match('@^HTTP/\S+\s+(\d{3})@', $headers[0], $m)
-            ? (int) $m[1]
-            : 0;
-        if ($img === false || $status < 200 || $status >= 300) {
-            $err = error_get_last();
-            $this->lastURLError = $status ? " HTTP status $status" : (!empty($err['message']) ? ' ' . $err['message'] : ' Unknown error');
-            if ($status === 404) {
-                $this->set404();
-            }
-            return false;
-        }
-        if (strlen($img) > config('maxFileSize')) {
-            $this->lastURLError = ' The remote file is greater than the maximum allowed file size.';
-            return false;
-        }
-
-        if (!file_put_contents($tempFilePath, $img)) {
-            $this->error("Could not write to $tempFilePath.");
-            return false;
-        }
-
-        return true;
+        // External images are rejected earlier in isExternalImageAllowed() when curl is missing.
+        $this->lastURLError = ' External images require the PHP curl extension.';
+        return false;
     }
 
     /**
@@ -1574,7 +1672,7 @@ Options -Indexes
             return false;
         }
 
-        $myhost = '@^https?://(?:www\.)?' . $this->myHost . '(?:$|/)@i';
+        $myhost = '@^https?://(?:www\.)?' . preg_quote($this->myHost, '@') . '(?:$|/)@i';
         if (!preg_match($myhost, serverv('HTTP_REFERER'))) {
             return false;
         }
