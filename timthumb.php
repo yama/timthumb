@@ -713,8 +713,9 @@ Deny from all
                 }
                 [$filter, $argCount] = $imageFilters[$filterId];
                 // imagefilter() rejects extra arguments since PHP 8, so pass exactly the required number.
+                // The smooth filter takes a float weight (e.g. f=11,0.5); the others take ints.
                 $args = array_map(
-                    'intval',
+                    $filter === IMG_FILTER_SMOOTH ? 'floatval' : 'intval',
                     array_pad(array_slice($settings, 1, $argCount), $argCount, 0)
                 );
                 imagefilter($canvas, $filter, ...$args);
