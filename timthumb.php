@@ -318,6 +318,36 @@ class timthumb
     }
 
     /**
+     * Rebuild the URL from the parts parse_url() sees, so that the HTTP client connects to exactly
+     * the host that was checked (URL parsers disagree on inputs containing "\", "@", "#" etc.).
+     * @return string|false
+     */
+    protected function buildSafeUrl($url)
+    {
+        $parts = parse_url($url);
+        if (!$parts || empty($parts['scheme']) || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
+            return false;
+        }
+        $scheme = strtolower($parts['scheme']);
+        $host   = strtolower($parts['host']);
+        $isIpv6 = $host[0] === '[' && filter_var(trim($host, '[]'), FILTER_VALIDATE_IP, FILTER_FLAG_IPV6);
+        if (!in_array($scheme, ['http', 'https'], true) || (!$isIpv6 && !preg_match('/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/', $host))) {
+            return false;
+        }
+        $path  = $parts['path'] ?? '/';
+        $query = isset($parts['query']) ? '?' . $parts['query'] : '';
+        if (preg_match('/[\x00-\x20\x7f\\\\]/', $path . $query)) {
+            $path  = str_replace(' ', '%20', $path);
+            $query = str_replace(' ', '%20', $query);
+            if (preg_match('/[\x00-\x20\x7f\\\\]/', $path . $query)) {
+                return false;
+            }
+        }
+        $port = isset($parts['port']) ? ':' . (int) $parts['port'] : '';
+        return $scheme . '://' . $host . $port . ($path[0] === '/' ? '' : '/') . $path . $query;
+    }
+
+    /**
      * Resolve the host of a URL and make sure it does not point to a private/reserved address.
      * @return string|null|false the IP to connect to, null when the check is disabled, false when blocked
      */
@@ -1292,7 +1322,10 @@ Options -Indexes
         if ($limit === false || (int) $limit <= 0) {
             return true; // unlimited
         }
-        $needed    = ($srcWidth * $srcHeight + max(1, $dstWidth) * max(1, $dstHeight)) * 5;
+        // A missing destination dimension is computed later, so assume the configured maximum for it.
+        $dstWidth  = $dstWidth ?: (int) config('maxWidth');
+        $dstHeight = $dstHeight ?: (int) config('maxHeight');
+        $needed    = ($srcWidth * $srcHeight + $dstWidth * $dstHeight) * 5;
         $available = $this->returnBytes($limit) - memory_get_usage();
         $this->debug(3, sprintf('Estimated memory needed: %d bytes, available: %d bytes', $needed, $available));
         return $needed < $available;
@@ -1362,6 +1395,11 @@ Options -Indexes
             return false;
         }
 
+        $url = $this->buildSafeUrl($url);
+        if ($url === false) {
+            $this->lastURLError = ' Invalid URL supplied.';
+            return false;
+        }
         // Without curl the resolved address can not be pinned, so this check is best-effort only.
         if ($this->resolvePublicIp($url) === false) {
             $this->lastURLError = ' The host resolves to a private or reserved IP address.';
@@ -1405,6 +1443,11 @@ Options -Indexes
      */
     protected function curlFetch($url, $tempFilePath)
     {
+        $url = $this->buildSafeUrl($url);
+        if ($url === false) {
+            $this->lastURLError = ' Invalid URL supplied.';
+            return false;
+        }
         $this->debug(3, "Fetching url with curl: $url");
         $ip = $this->resolvePublicIp($url);
         if ($ip === false) {
