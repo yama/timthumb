@@ -14,7 +14,7 @@ return [
     // 'maxFileSize'  => 15728640,
     // 'maxWidth'     => 1024,
     // 'maxHeight'    => 768,
-    // 'allowedSites' => ['img.youtube.com','tinypic.com'],
+    // 'allowedSites' => ['img.youtube.com', '.example.com'], // exact host, or '.domain' to include subdomains
     // 'fileCache' => [
     //     'maxFileAge' => 60*60*24*7,
     //     'directory'  => __DIR__ . '/cache',

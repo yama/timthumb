@@ -33,7 +33,11 @@ class timthumb
         'memoryLimit'   => '256M', // Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
         'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
         'curlTimeout'   => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
-        'allowedSites'  => [], // Allowed external websites. Example: ['usercontent.google.com', 'img.youtube.com']
+        // Allowed external websites. Hosts must match exactly; prefix with a dot to also allow subdomains.
+        // Example: ['img.youtube.com', '.example.com'] allows img.youtube.com, example.com and *.example.com
+        // Avoid allowing domains where anyone can create content (e.g. '.github.io', '.s3.amazonaws.com').
+        'allowedSites'  => [],
+        'allowPrivateIPs' => false, // Allow fetching from hosts that resolve to private/loopback/reserved IP addresses (e.g. an intranet image server)
 
         'browserCache' => [
             'maxAge' => 60*60*24*10, // Time to cache in the browser
@@ -273,7 +277,9 @@ class timthumb
     }
 
     /**
-     * Whether the URL is http(s) and its host is one of `allowedSites` or a subdomain of one.
+     * Whether the URL is http(s) on the default port and its host is allowed by `allowedSites`.
+     * An entry matches the host exactly; an entry starting with a dot ('.example.com')
+     * also matches example.com and all of its subdomains.
      */
     protected function isAllowedSiteUrl($url)
     {
@@ -287,15 +293,70 @@ class timthumb
         if (isset($parts['user']) || isset($parts['pass'])) {
             return false;
         }
+        if (isset($parts['port']) && !in_array((int) $parts['port'], [80, 443], true)) {
+            $this->debug(1, 'Blocked external URL on non-standard port: ' . $parts['port']);
+            return false;
+        }
         $givenSite = strtolower($parts['host']);
         foreach (config('allowedSites') as $allowedSite) {
-            $allowedSite = strtolower(ltrim($allowedSite, '.'));
-            if ($givenSite === $allowedSite || substr($givenSite, -strlen('.' . $allowedSite)) === '.' . $allowedSite) {
+            $allowedSite = strtolower(trim($allowedSite));
+            if ($allowedSite === '' || $allowedSite === '.') {
+                continue;
+            }
+            if ($allowedSite[0] === '.') {
+                $domain = substr($allowedSite, 1);
+                $isMatch = $givenSite === $domain || substr($givenSite, -strlen($allowedSite)) === $allowedSite;
+            } else {
+                $isMatch = $givenSite === $allowedSite;
+            }
+            if ($isMatch) {
                 $this->debug(3, sprintf('URL hostname %s matches %s so allowing.', $givenSite, $allowedSite));
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * Resolve the host of a URL and make sure it does not point to a private/reserved address.
+     * @return string|null|false the IP to connect to, null when the check is disabled, false when blocked
+     */
+    protected function resolvePublicIp($url)
+    {
+        if (config('allowPrivateIPs')) {
+            return null;
+        }
+        $host = trim((string) parse_url($url, PHP_URL_HOST), '[]');
+        if ($host === '') {
+            return false;
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            $ips = [$host];
+        } else {
+            $ips = @gethostbynamel($host) ?: [];
+            $aaaa = function_exists('dns_get_record') ? @dns_get_record($host, DNS_AAAA) : [];
+            foreach ($aaaa ?: [] as $record) {
+                if (!empty($record['ipv6'])) {
+                    $ips[] = $record['ipv6'];
+                }
+            }
+        }
+        if (!$ips) {
+            return false;
+        }
+        // Every address must be public, otherwise a round-robin record could still reach an internal host.
+        foreach ($ips as $ip) {
+            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                $this->debug(1, sprintf('Blocked external URL: %s resolves to non-public address %s', $host, $ip));
+                return false;
+            }
+        }
+        foreach ($ips as $ip) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                return $ip; // prefer IPv4
+            }
+        }
+        return $ips[0];
     }
 
     protected function getCacheDirectory() {
@@ -667,14 +728,13 @@ Options -Indexes
         // Create a new transparent color for image
         // If is a png and PNG_IS_TRANSPARENT is false then remove the alpha transparency
         // (and if is set a canvas color show it in the background)
+        $useTransparentCanvas = $mimeType === 'image/png' && !config('png.isTransparent') && $canvas_trans;
         $color = imagecolorallocatealpha(
             $canvas,
             hexdec(substr($canvas_color, 0, 2)),
             hexdec(substr($canvas_color, 2, 2)),
             hexdec(substr($canvas_color, 4, 2)),
-            ($mimeType === 'image/png' && !config('png.isTransparent') && $canvas_trans)
-                ? 127
-                : 0
+            $useTransparentCanvas ? 127 : 0
         );
 
         // Completely fill the background of the new image with allocated color.
@@ -772,7 +832,7 @@ Options -Indexes
                 8 => [IMG_FILTER_GAUSSIAN_BLUR, 0],
                 9 => [IMG_FILTER_SELECTIVE_BLUR, 0],
                 10 => [IMG_FILTER_MEAN_REMOVAL, 0],
-                11 => [IMG_FILTER_SMOOTH, 0],
+                11 => [IMG_FILTER_SMOOTH, 1],
             ];
             // apply filters to image
             $filterList = explode('|', $filters);
@@ -804,7 +864,9 @@ Options -Indexes
             imageconvolution($canvas, $sharpenMatrix, $divisor, $offset);
         }
         //Straight from Wordpress core code. Reduces filesize by up to 70% for PNG's
-        if ((IMAGETYPE_PNG == $origType || IMAGETYPE_GIF == $origType) && function_exists('imageistruecolor') && !imageistruecolor($image) && imagecolortransparent($image) >= 0) {
+        // Skipped when the canvas uses alpha transparency: imagetruecolortopalette() drops the alpha channel,
+        // which would turn the transparent background opaque.
+        if (!$useTransparentCanvas && (IMAGETYPE_PNG == $origType || IMAGETYPE_GIF == $origType) && function_exists('imageistruecolor') && !imageistruecolor($image) && imagecolortransparent($image) >= 0) {
             imagetruecolortopalette($canvas, false, imagecolorstotal($image));
         }
 
@@ -1300,6 +1362,11 @@ Options -Indexes
             return false;
         }
 
+        // Without curl the resolved address can not be pinned, so this check is best-effort only.
+        if ($this->resolvePublicIp($url) === false) {
+            $this->lastURLError = ' The host resolves to a private or reserved IP address.';
+            return false;
+        }
         $context = stream_context_create([
             'http' => [
                 'follow_location' => 0,
@@ -1339,6 +1406,11 @@ Options -Indexes
     protected function curlFetch($url, $tempFilePath)
     {
         $this->debug(3, "Fetching url with curl: $url");
+        $ip = $this->resolvePublicIp($url);
+        if ($ip === false) {
+            $this->lastURLError = ' The host resolves to a private or reserved IP address.';
+            return false;
+        }
         $fileHandle = fopen($tempFilePath, 'wb');
         if (!$fileHandle) {
             $this->error("Could not open temporary file for writing.");
@@ -1353,6 +1425,14 @@ Options -Indexes
         curl_setopt($curlHandle, CURLOPT_FOLLOWLOCATION, false);
         if (defined('CURLOPT_PROTOCOLS')) {
             curl_setopt($curlHandle, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+        }
+        if ($ip !== null) {
+            // Connect to the address we have just checked, so DNS can not be changed in between (DNS rebinding)
+            $parts = parse_url($url);
+            $port  = $parts['port'] ?? (strtolower($parts['scheme']) === 'https' ? 443 : 80);
+            $host  = trim($parts['host'], '[]');
+            $addr  = strpos($ip, ':') !== false ? "[$ip]" : $ip;
+            curl_setopt($curlHandle, CURLOPT_RESOLVE, ["$host:$port:$addr"]);
         }
         curl_setopt($curlHandle, CURLOPT_WRITEFUNCTION, function ($curlHandle, $data) use ($fileHandle) {
             return $this->curlWrite($curlHandle, $data, $fileHandle);

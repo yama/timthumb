@@ -53,6 +53,8 @@ Rename `timthumb-config.php.sample` to `timthumb-config.php`. Open this file and
 ```php
 'allowedSites'  => ['img.youtube.com','tinypic.com'],
 ```
+
+Hosts must match exactly. To also allow subdomains, prefix the entry with a dot (e.g. `'.example.com'`). Hosts that resolve to private or internal IP addresses are blocked unless `allowPrivateIPs` is set to `true`.
 In the sample, it's already written in a commented-out state, so you can simply uncomment it. By enabling this setting, you can use images from external sites.
 
 ### Usage
@@ -189,7 +191,10 @@ The query string parameters are used to specify processing for each image, but t
     - Comment: Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
 - `allowedSites`
     - Default: []
-    - Comment: Allowed external websites. Subdomains are also allowed (e.g. 'example.com' allows 'img.example.com'). Redirects are only followed to allowed sites. Example: ['usercontent.google.com', 'img.youtube.com']
+    - Comment: Allowed external websites. Hosts must match exactly; prefix an entry with a dot to also allow its subdomains (e.g. '.example.com' allows example.com and img.example.com). Only http/https on the default ports (80/443) are fetched, and redirects are only followed to allowed sites. Avoid allowing domains where anyone can publish content (e.g. '.github.io', '.s3.amazonaws.com'). Example: ['img.youtube.com', '.example.com']
+- `allowPrivateIPs`
+    - Default: false
+    - Comment: Allow fetching from hosts that resolve to private, loopback or reserved IP addresses (e.g. an intranet image server). Keep this false unless you need it: it protects the server's internal network (SSRF).
 - `browserCache`
     - `maxAge`
         - Default: 60\*60\*24\*10
