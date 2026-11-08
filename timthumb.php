@@ -612,6 +612,12 @@ Options -Indexes
         // set memory limit to be able to have enough space to resize larger images
         $this->setMemoryLimit();
 
+        // Refuse images that would not fit in memory once decoded (e.g. a small file with huge dimensions),
+        // instead of dying with a fatal "Allowed memory size exhausted" error.
+        if (!$this->hasEnoughMemoryFor($origWidth, $origHeight, $new_width, $new_height)) {
+            return $this->error('The image is too large to process (not enough memory).');
+        }
+
         // open the existing image
         $image = $this->openImage($mimeType, $localImage);
         if ($image === false) {
@@ -1212,6 +1218,22 @@ Options -Indexes
             return $info['mime'];
         }
         return '';
+    }
+
+    /**
+     * Estimate the memory GD needs for the source image and the canvas.
+     * A truecolor GD image uses about 4 bytes per pixel plus row overhead, so ~5 bytes per pixel is used.
+     */
+    protected function hasEnoughMemoryFor($srcWidth, $srcHeight, $dstWidth, $dstHeight)
+    {
+        $limit = ini_get('memory_limit');
+        if ($limit === false || (int) $limit <= 0) {
+            return true; // unlimited
+        }
+        $needed    = ($srcWidth * $srcHeight + max(1, $dstWidth) * max(1, $dstHeight)) * 5;
+        $available = $this->returnBytes($limit) - memory_get_usage();
+        $this->debug(3, sprintf('Estimated memory needed: %d bytes, available: %d bytes', $needed, $available));
+        return $needed < $available;
     }
 
     protected function setMemoryLimit()
