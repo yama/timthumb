@@ -700,13 +700,14 @@ Deny from all
                 8 => [IMG_FILTER_GAUSSIAN_BLUR, 0],
                 9 => [IMG_FILTER_SELECTIVE_BLUR, 0],
                 10 => [IMG_FILTER_MEAN_REMOVAL, 0],
-                11 => [IMG_FILTER_SMOOTH, 0],
+                11 => [IMG_FILTER_SMOOTH, 1],
             ];
             // apply filters to image
             $filterList = explode('|', $filters);
             foreach ($filterList as $fl) {
                 $settings = explode(',', $fl);
-                $filterId = (int) $settings[0];
+                // Look up by the raw string so malformed IDs such as "3junk" are ignored, not cast to 3.
+                $filterId = $settings[0];
                 if (!isset($imageFilters[$filterId])) {
                     continue;
                 }
