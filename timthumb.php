@@ -966,7 +966,12 @@ Options -Indexes
         }
         $suffix  = (string) config('fileCache.suffix');
         $timeAgo = now() - config('fileCache.maxFileAge');
+        // The file of this request may still be read by the web server (sendfile), so it is kept.
+        $current = $this->cachefilePath ? basename($this->cachefilePath) : '';
         while (($entry = readdir($dh)) !== false) {
+            if ($entry === $current) {
+                continue;
+            }
             $isCacheFile = $suffix !== '' && (
                 substr($entry, -strlen($suffix)) === $suffix               // cache files
                 || substr($entry, -strlen($suffix) - 5) === $suffix . '.lock' // lock files left by a crashed request
