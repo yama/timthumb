@@ -14,7 +14,7 @@
  */
 
 // Do not execute the instance when it is being loaded from an external source
-if (__FILE__ !== serverv('SCRIPT_FILENAME')) {
+if (realpath(__FILE__) !== realpath(serverv('SCRIPT_FILENAME'))) {
     return;
 }
 
@@ -23,17 +23,22 @@ $timthumb->start();
 
 class timthumb
 {
-    public $version = '2.9.0'; // Version of this script
+    public $version = '2.10.0'; // Version of this script
 
     public static $config = [
         'debug' => [
-            'level'  => 1, // Debug level 1 is less noisy, while 3 is the most verbose. Set to 0 to disable
+            'level'  => 0, // Debug level (written to error_log). 1 is less noisy, while 3 is the most verbose. 0 disables it
             'displayErrorMessages' => true, // Display error messages. Set to false to turn off errors (good for production websites)
         ],
-        'memoryLimit'   => '30M', // Set PHP memory limit
+        'memoryLimit'   => '256M', // Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
         'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
         'curlTimeout'   => 20, // Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
-        'allowedSites'  => [], // Allowed external websites. Example: ['usercontent.google.com', 'img.youtube.com']
+        // Allowed external websites. Hosts must match exactly; prefix with a dot to also allow subdomains.
+        // Example: ['img.youtube.com', '.example.com'] allows img.youtube.com, example.com and *.example.com
+        // Only ports 80/443 are allowed unless the entry names a port, e.g. 'localhost:9000' (development).
+        // Avoid allowing domains where anyone can create content (e.g. '.github.io', '.s3.amazonaws.com').
+        'allowedSites'  => [],
+        'allowPrivateIPs' => false, // Allow fetching from hosts that resolve to private/loopback/reserved IP addresses (e.g. an intranet image server)
 
         'browserCache' => [
             'maxAge' => 60*60*24*10, // Time to cache in the browser
@@ -42,10 +47,10 @@ class timthumb
         'fileCache' => [
             'enabled'           => true, // Should we store resized/modified images on disk to speed things up?
             'timeBetweenCleans' => 60*60*24, // How often the cache is cleaned
-            'maxFileAge'        => 60*60*24, // How old does a file have to be to be deleted from the cache
+            'maxFileAge'        => 60*60*24*7, // How old does a file have to be to be deleted from the cache
             'suffix'            => '.cache', // What to put at the end of all files in the cache directory so we can identify them
             'prefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
-            'directory'         => './cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
+            'directory'         => __DIR__ . '/cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
         ],
         'maxWidth'      => 1920, // Maximum image width
         'maxHeight'     => 1920, // Maximum image height
@@ -59,7 +64,10 @@ class timthumb
             'h'      => 200, // Default thumbnail height.
         ],
         'png' => [
-            'isTransparent'   => false, // Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
+            // Kept for compatibility with the original TimThumb (PNG_IS_TRANSPARENT), whose meaning is inverted:
+            // false = the canvas behind PNGs is transparent (unless `ct=0` is given)
+            // true  = the canvas behind PNGs is filled with the `cc` colour
+            'isTransparent'   => false,
             'optipngEnabled'  => false,
             'optipngPath'     => '/usr/bin/optipng', //This will run first because it gives better compression than pngcrush.
             'pngcrushEnabled' => false,
@@ -127,7 +135,15 @@ class timthumb
         $this->cleanCache();
 
         $this->myHost = preg_replace('@^www\.@i', '', serverv('HTTP_HOST'));
-        $this->src    = preg_replace('@https?://(?:www\.)?' . $this->myHost . '@i', '', getv('src'));
+        $this->src    = getv('src');
+        if ($this->myHost !== '') {
+            // Strip our own host so that full URLs to this site are treated as local files
+            $this->src = preg_replace(
+                '@^https?://(?:www\.)?' . preg_quote($this->myHost, '@') . '(?=/|$)@i',
+                '',
+                $this->src
+            );
+        }
 
         if (strlen($this->src) <= 3) {
             $this->error('No image specified');
@@ -135,7 +151,7 @@ class timthumb
         }
         if (config('blockExternalLeechers') && !$this->isAllowedReferer()) {
             echo $this->dispRedImage();
-            return;
+            exit;
         }
 
         if (preg_match('@^https?://[^/]+@i', $this->src)) {
@@ -152,10 +168,8 @@ class timthumb
         $this->debug(3, 'Salt is: ' . $salt);
 
         if ($this->isExternalURL) {
-            $arr = explode('&', serverv('QUERY_STRING'));
-            asort($arr);
             $this->cachefilePath = $this->generateCacheFilePath(
-                $salt . implode('', $arr) . $this->fileCacheVersion
+                $salt . $this->cacheKeyParams() . $this->fileCacheVersion
             );
             return;
         }
@@ -172,8 +186,22 @@ class timthumb
         $this->localImageMTime = @filemtime($this->localImagePath);
         //We include the mtime of the local file in case in changes on disk.
         $this->cachefilePath = $this->generateCacheFilePath(
-            $salt . $this->localImageMTime . serverv('QUERY_STRING', '') . $this->fileCacheVersion
+            $salt . $this->localImageMTime . $this->localImagePath . $this->cacheKeyParams() . $this->fileCacheVersion
         );
+    }
+
+    /**
+     * Build the part of the cache key that depends on the request.
+     * Only parameters that affect the output are used, so that arbitrary
+     * extra query parameters can not be used to fill the cache directory.
+     */
+    protected function cacheKeyParams()
+    {
+        $params = [];
+        foreach (['src', 'w', 'h', 'zc', 'q', 'a', 'f', 's', 'cc', 'ct'] as $key) {
+            $params[$key] = getv($key, null);
+        }
+        return serialize($params);
     }
 
     public function __destruct()
@@ -239,23 +267,135 @@ class timthumb
             return false;
         }
 
-        $this->debug(2, 'Fetching only from selected external sites is enabled.');
-        foreach (config('allowedSites') as $allowedSite) {
-            $givenSite = parse_url(getv('src'))['host'];
-            $isMatch = preg_match(
-                sprintf('/^%1$s$|^\\.%1$s$/i', preg_quote($allowedSite, '/')),
-                $givenSite
-            );
-            if ($isMatch) {
-                $this->debug(3, sprintf('URL hostname %s matches %s so allowing.', $givenSite, $allowedSite));
-                return true;
-            }
+        if ($this->isAllowedSiteUrl($this->src)) {
+            return true;
         }
 
         $this->error(
             'You may not fetch images from that site. To enable this site in timthumb, you can either add it to `allowedSites`.'
         );
         return false;
+    }
+
+    /**
+     * Whether the URL is http(s) on the default port and its host is allowed by `allowedSites`.
+     * An entry matches the host exactly; an entry starting with a dot ('.example.com')
+     * also matches example.com and all of its subdomains.
+     */
+    protected function isAllowedSiteUrl($url)
+    {
+        $parts = parse_url($url);
+        if (!$parts || empty($parts['host']) || empty($parts['scheme'])) {
+            return false;
+        }
+        if (!in_array(strtolower($parts['scheme']), ['http', 'https'], true)) {
+            return false;
+        }
+        if (isset($parts['user']) || isset($parts['pass'])) {
+            return false;
+        }
+        $givenSite = strtolower($parts['host']);
+        $givenPort = isset($parts['port'])
+            ? (int) $parts['port']
+            : (strtolower($parts['scheme']) === 'https' ? 443 : 80);
+        foreach (config('allowedSites') as $allowedSite) {
+            $allowedSite = strtolower(trim($allowedSite));
+            // An entry may specify a port ('localhost:9000'); otherwise only the standard ports 80/443 are allowed.
+            $allowedPorts = [80, 443];
+            if (preg_match('/^(.+):(\d+)$/', $allowedSite, $m) && strpos($m[1], ':') === false) {
+                $allowedSite  = $m[1];
+                $allowedPorts = [(int) $m[2]];
+            }
+            if ($allowedSite === '' || $allowedSite === '.') {
+                continue;
+            }
+            if (!in_array($givenPort, $allowedPorts, true)) {
+                continue;
+            }
+            if ($allowedSite[0] === '.') {
+                $domain = substr($allowedSite, 1);
+                $isMatch = $givenSite === $domain || substr($givenSite, -strlen($allowedSite)) === $allowedSite;
+            } else {
+                $isMatch = $givenSite === $allowedSite;
+            }
+            if ($isMatch) {
+                $this->debug(3, sprintf('URL hostname %s matches %s so allowing.', $givenSite, $allowedSite));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Rebuild the URL from the parts parse_url() sees, so that the HTTP client connects to exactly
+     * the host that was checked (URL parsers disagree on inputs containing "\", "@", "#" etc.).
+     * @return string|false
+     */
+    protected function buildSafeUrl($url)
+    {
+        $parts = parse_url($url);
+        if (!$parts || empty($parts['scheme']) || empty($parts['host']) || isset($parts['user']) || isset($parts['pass'])) {
+            return false;
+        }
+        $scheme = strtolower($parts['scheme']);
+        $host   = strtolower($parts['host']);
+        $isIpv6 = $host[0] === '[' && filter_var(trim($host, '[]'), FILTER_VALIDATE_IP, FILTER_FLAG_IPV6);
+        if (!in_array($scheme, ['http', 'https'], true) || (!$isIpv6 && !preg_match('/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/', $host))) {
+            return false;
+        }
+        $path  = $parts['path'] ?? '/';
+        $query = isset($parts['query']) ? '?' . $parts['query'] : '';
+        if (preg_match('/[\x00-\x20\x7f\\\\]/', $path . $query)) {
+            $path  = str_replace(' ', '%20', $path);
+            $query = str_replace(' ', '%20', $query);
+            if (preg_match('/[\x00-\x20\x7f\\\\]/', $path . $query)) {
+                return false;
+            }
+        }
+        $port = isset($parts['port']) ? ':' . (int) $parts['port'] : '';
+        return $scheme . '://' . $host . $port . ($path[0] === '/' ? '' : '/') . $path . $query;
+    }
+
+    /**
+     * Resolve the host of a URL and make sure it does not point to a private/reserved address.
+     * @return string|null|false the IP to connect to, null when the check is disabled, false when blocked
+     */
+    protected function resolvePublicIp($url)
+    {
+        if (config('allowPrivateIPs')) {
+            return null;
+        }
+        $host = trim((string) parse_url($url, PHP_URL_HOST), '[]');
+        if ($host === '') {
+            return false;
+        }
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            $ips = [$host];
+        } else {
+            $ips = @gethostbynamel($host) ?: [];
+            $aaaa = function_exists('dns_get_record') ? @dns_get_record($host, DNS_AAAA) : [];
+            foreach ($aaaa ?: [] as $record) {
+                if (!empty($record['ipv6'])) {
+                    $ips[] = $record['ipv6'];
+                }
+            }
+        }
+        if (!$ips) {
+            return false;
+        }
+        // Every address must be public, otherwise a round-robin record could still reach an internal host.
+        foreach ($ips as $ip) {
+            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                $this->debug(1, sprintf('Blocked external URL: %s resolves to non-public address %s', $host, $ip));
+                return false;
+            }
+        }
+        foreach ($ips as $ip) {
+            if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+                return $ip; // prefer IPv4
+            }
+        }
+        return $ips[0];
     }
 
     protected function getCacheDirectory() {
@@ -297,7 +437,12 @@ class timthumb
 "# Disable directory browsing
 Options -Indexes
 # Deny access to all files in this directory
-Deny from all
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Deny from all
+</IfModule>
 ";
 
         return (bool) file_put_contents($htaccessFilePath, $htaccessContent);
@@ -309,9 +454,10 @@ Deny from all
             return false;
         }
 
+        $status = $this->is404() ? 404 : 400;
+
         if (config('notFoundImage') && $this->is404()) {
-            $this->localImagePath = $this->getLocalImagePath(config('notFoundImage'));
-            if ($this->serveImg($this->localImagePath)) {
+            if ($this->serveImg($this->resolveConfiguredImage(config('notFoundImage')), $status)) {
                 exit;
             }
 
@@ -321,7 +467,7 @@ Deny from all
         }
 
         if (config('errorImage')) {
-            if ($this->serveImg(config('errorImage'))) {
+            if ($this->serveImg($this->resolveConfiguredImage(config('errorImage')), $status)) {
                 exit;
             }
 
@@ -330,9 +476,9 @@ Deny from all
             );
         }
 
-        header(serverv('SERVER_PROTOCOL') . ' 400 Bad Request');
+        http_response_code($status);
         if (!config('debug.displayErrorMessages')) {
-            return;
+            exit;
         }
         $html = '<ul>';
         foreach ($this->errors as $err) {
@@ -342,9 +488,24 @@ Deny from all
         echo '<h1>A TimThumb error has occured</h1>';
         echo 'The following error(s) occured:<br />' . $html . '<br />';
         echo '<br />Query String : ' . htmlentities(serverv('QUERY_STRING'), ENT_QUOTES);
-        echo '<br />TimThumb version : ' . $this->version . '</pre>';
+        echo '<br />TimThumb version : ' . $this->version;
 
         exit;
+    }
+
+    /**
+     * `notFoundImage` / `errorImage` may be an absolute filesystem path or a path under the document root.
+     */
+    protected function resolveConfiguredImage($path)
+    {
+        if (is_file($path)) {
+            return $path;
+        }
+        $docRoot = $this->calcDocRoot();
+        if ($docRoot && is_file($docRoot . '/' . ltrim($path, '/'))) {
+            return $docRoot . '/' . ltrim($path, '/');
+        }
+        return false;
     }
 
     protected function tryBrowserCache()
@@ -366,11 +527,11 @@ Deny from all
         if (!$mtime) return false;
 
         $etag = sprintf('"%s"', $mtime);
-        if ($etag === filter_input(INPUT_SERVER, 'HTTP_IF_NONE_MATCH')) {
+        if ($etag === serverv('HTTP_IF_NONE_MATCH')) {
             $this->debug(1, 'Returning 304 not modified');
             $this->debug(3, 'File has not been modified since last get, so serving a 304.');
-            header('Content-Length: 0');
-            header('HTTP', true, 304);
+            http_response_code(304);
+            header(sprintf('ETag: %s', $etag));
             exit;
         }
         header(sprintf('ETag: %s', $etag));
@@ -510,10 +671,13 @@ Deny from all
 
     protected function processImageAndWriteToCache($localImage)
     {
-        $sData      = getimagesize($localImage);
-        $origWidth  = $sData[0] ?? null;
-        $origHeight = $sData[1] ?? null;
-        $origType   = $sData[2] ?? null;
+        $sData      = @getimagesize($localImage);
+        if (!$sData) {
+            return $this->error("The image being resized is not a valid gif, jpg or png.");
+        }
+        $origWidth  = $sData[0];
+        $origHeight = $sData[1];
+        $origType   = $sData[2];
         $mimeType   = $sData['mime'] ?? '';
 
         $this->debug(3, "Mime type of image is $mimeType");
@@ -525,7 +689,7 @@ Deny from all
         $new_width    = abs((int) getv('w', 0));
         $new_height   = abs((int) getv('h', 0));
         $zoom_crop    = (int) getv('zc', config('default.zc'));
-        $quality      = abs((int) getv('q', config('default.q')));
+        $quality      = max(0, min(100, abs((int) getv('q', config('default.q')))));
         $align        = getv('a', 'c');
         $filters      = getv('f', config('default.f'));
         $sharpen      = (bool) getv('s', config('default.s'));
@@ -542,11 +706,17 @@ Deny from all
         }
 
         // ensure size limits can not be abused
-        $new_width  = min($origWidth, $new_width, config('maxWidth'));
-        $new_height = min($origHeight, $new_height, config('maxHeight'));
+        $new_width  = (int) min($origWidth, $new_width, config('maxWidth'));
+        $new_height = (int) min($origHeight, $new_height, config('maxHeight'));
 
         // set memory limit to be able to have enough space to resize larger images
         $this->setMemoryLimit();
+
+        // Refuse images that would not fit in memory once decoded (e.g. a small file with huge dimensions),
+        // instead of dying with a fatal "Allowed memory size exhausted" error.
+        if (!$this->hasEnoughMemoryFor($origWidth, $origHeight, $new_width, $new_height)) {
+            return $this->error('The image is too large to process (not enough memory).');
+        }
 
         // open the existing image
         $image = $this->openImage($mimeType, $localImage);
@@ -562,20 +732,20 @@ Deny from all
 
         // generate new w/h if not provided
         if ($new_width && !$new_height) {
-            $new_height = (int) floor($height * ($new_width / $width));
+            $new_height = (int) max(1, floor($height * ($new_width / $width)));
         } elseif ($new_height && !$new_width) {
-            $new_width = (int) floor($width * ($new_height / $height));
+            $new_width = (int) max(1, floor($width * ($new_height / $height)));
         }
 
-        // scale down and add borders
+        // scale down (canvas is resized to fit the image)
         if ($zoom_crop == 3) {
 
             $final_height = $height * ($new_width / $width);
 
             if ($final_height > $new_height) {
-                $new_width = (int) round($width * ($new_height / $height));
+                $new_width = (int) max(1, round($width * ($new_height / $height)));
             } else {
-                $new_height = (int) round($final_height);
+                $new_height = (int) max(1, round($final_height));
             }
         }
 
@@ -597,14 +767,13 @@ Deny from all
         // Create a new transparent color for image
         // If is a png and PNG_IS_TRANSPARENT is false then remove the alpha transparency
         // (and if is set a canvas color show it in the background)
+        $useTransparentCanvas = $mimeType === 'image/png' && !config('png.isTransparent') && $canvas_trans;
         $color = imagecolorallocatealpha(
             $canvas,
             hexdec(substr($canvas_color, 0, 2)),
             hexdec(substr($canvas_color, 2, 2)),
             hexdec(substr($canvas_color, 4, 2)),
-            ($mimeType === 'image/png' && !config('png.isTransparent') && $canvas_trans)
-                ? 127
-                : 0
+            $useTransparentCanvas ? 127 : 0
         );
 
         // Completely fill the background of the new image with allocated color.
@@ -616,11 +785,13 @@ Deny from all
             $final_height = $height * ($new_width / $width);
 
             if ($final_height > $new_height) {
-                $new_width = (int) round($width * ($new_height / $height));
-                $origin_x = (int) round(($new_width / 2) - ($new_width / 2));
+                $canvas_width = $new_width;
+                $new_width = (int) max(1, round($width * ($new_height / $height)));
+                $origin_x = (int) round(($canvas_width - $new_width) / 2);
             } else {
-                $new_height = (int) round($final_height);
-                $origin_y = (int) round(($new_height / 2) - ($new_height / 2));
+                $canvas_height = $new_height;
+                $new_height = (int) max(1, round($final_height));
+                $origin_y = (int) round(($canvas_height - $new_height) / 2);
             }
         }
 
@@ -638,11 +809,11 @@ Deny from all
 
             // calculate x or y coordinate and width or height of source
             if ($cmp_x > $cmp_y) {
-                $src_w = round($width / $cmp_x * $cmp_y);
-                $src_x = round(($width - ($width / $cmp_x * $cmp_y)) / 2);
+                $src_w = (int) round($width / $cmp_x * $cmp_y);
+                $src_x = (int) round(($width - ($width / $cmp_x * $cmp_y)) / 2);
             } elseif ($cmp_y > $cmp_x) {
-                $src_h = round($height / $cmp_y * $cmp_x);
-                $src_y = round(($height - ($height / $cmp_y * $cmp_x)) / 2);
+                $src_h = (int) round($height / $cmp_y * $cmp_x);
+                $src_y = (int) round(($height - ($height / $cmp_y * $cmp_x)) / 2);
             }
 
             // positional cropping!
@@ -737,7 +908,9 @@ Deny from all
             imageconvolution($canvas, $sharpenMatrix, $divisor, $offset);
         }
         //Straight from Wordpress core code. Reduces filesize by up to 70% for PNG's
-        if ((IMAGETYPE_PNG == $origType || IMAGETYPE_GIF == $origType) && function_exists('imageistruecolor') && !imageistruecolor($image) && imagecolortransparent($image) > 0) {
+        // Skipped when the canvas uses alpha transparency: imagetruecolortopalette() drops the alpha channel,
+        // which would turn the transparent background opaque.
+        if (!$useTransparentCanvas && (IMAGETYPE_PNG == $origType || IMAGETYPE_GIF == $origType) && function_exists('imageistruecolor') && !imageistruecolor($image) && imagecolortransparent($image) >= 0) {
             imagetruecolortopalette($canvas, false, imagecolorstotal($image));
         }
 
@@ -804,7 +977,7 @@ Deny from all
 
         $this->debug(3, "optipng'ing $tempFilePath");
         $orgSize = filesize($tempFilePath);
-        exec(config('png.optipngPath') . ' -o1 ' . $tempFilePath); //you can use up to -o7 but it really slows things down
+        $this->runCommand([config('png.optipngPath'), '-o1', $tempFilePath]); //you can use up to -o7 but it really slows things down
         clearstatcache();
         $afterSize = filesize($tempFilePath);
         $sizeDrop = $orgSize - $afterSize;
@@ -819,6 +992,22 @@ Deny from all
         $this->debug(1, "optipng reduced size by $sizeDrop");
     }
 
+    /**
+     * Run an external command without going through a shell and return its combined output.
+     */
+    protected function runCommand(array $command)
+    {
+        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        if (!is_resource($process)) {
+            return '';
+        }
+        $output = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+        return $output;
+    }
+
     protected function handlePngCrush($tempFilePath) {
         $pngCrushPath = config('png.pngcrushPath');
         if (!$pngCrushPath || !is_file($pngCrushPath)) {
@@ -828,8 +1017,10 @@ Deny from all
 
         $pngCrushFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
         $this->debug(3, "pngcrush'ing $tempFilePath to $pngCrushFilePath");
-        exec("$pngCrushPath $tempFilePath $pngCrushFilePath", $out);
-        if (!is_file($pngCrushFilePath)) {
+        $out = $this->runCommand([$pngCrushPath, $tempFilePath, $pngCrushFilePath]);
+        clearstatcache();
+        if (!is_file($pngCrushFilePath) || filesize($pngCrushFilePath) === 0) {
+            @unlink($pngCrushFilePath);
             $this->debug(3, "pngcrush failed with output:" . print_r($out, true));
             return;
         }
@@ -897,75 +1088,51 @@ Deny from all
             );
         }
 
-        if (!is_dir($docRoot)) {
-            $this->error("Server path does not exist. Ensure variable \$_SERVER['DOCUMENT_ROOT'] is set correctly");
+        $realDocRoot = realpath($docRoot);
+        if (!$realDocRoot || !is_dir($realDocRoot)) {
+            return $this->error("Server path does not exist. Ensure variable \$_SERVER['DOCUMENT_ROOT'] is set correctly");
         }
 
-        //Do not go past this point without docRoot set
-
-        //Try src under docRoot
-        if (is_file($docRoot . '/' . $src)) {
-            $this->debug(3, "Found file as " . $docRoot . '/' . $src);
-            $real = $this->realpath($docRoot . '/' . $src);
-            if (stripos($real, $docRoot) === 0) {
-                return $real;
+        //Candidate locations: under docRoot, as an absolute path, then relative to each directory between docRoot and this script.
+        $candidates = [$docRoot . '/' . $src, '/' . $src];
+        $scriptDir = str_replace('\\', '/', dirname(serverv('SCRIPT_FILENAME')));
+        // Normalize both sides to "/" so the prefix check also works with Windows paths (C:\inetpub\wwwroot)
+        $base = rtrim(str_replace('\\', '/', $docRoot), '/');
+        $relative = (stripos($scriptDir, $base) === 0) ? substr($scriptDir, strlen($base)) : '';
+        foreach (explode('/', $relative) as $sub) {
+            if ($sub !== '') {
+                $base .= '/' . $sub;
             }
-
-            $this->debug(1, "Security block: The file specified occurs outside the document root.");
-            //allow search to continue
-        }
-        //Check absolute paths and then verify the real path is under doc root
-        $absolute = $this->realpath('/' . $src);
-        if ($absolute && is_file($absolute)) { //realpath does file_exists check, so can probably skip the exists check here
-            $this->debug(3, "Found absolute path: $absolute");
-            if (!$docRoot) {
-                $this->sanityFail("docRoot not set when checking absolute path.");
-            }
-            if (stripos($absolute, $docRoot) === 0) {
-                return $absolute;
-            }
-
-            $this->debug(1, "Security block: The file specified occurs outside the document root.");
-            //and continue search
+            $candidates[] = $base . '/' . $src;
         }
 
-        // account for Windows directory structure
-        if (strpos(serverv('SCRIPT_FILENAME'), ':') !== false) {
-            $sub_directories = explode('\\', str_replace($docRoot, '', serverv('SCRIPT_FILENAME')));
-        } else {
-            $sub_directories = explode('/', str_replace($docRoot, '', serverv('SCRIPT_FILENAME')));
-        }
-
-        $base = $docRoot;
-        foreach ($sub_directories as $sub) {
-            $base .= $sub . '/';
-
-            $this->debug(3, "Trying file as: " . $base . $src);
-            if (!is_file($base . $src)) {
+        foreach (array_unique($candidates) as $candidate) {
+            $this->debug(3, "Trying file as: " . $candidate);
+            $real = realpath($candidate);
+            if (!$real || !is_file($real)) {
                 continue;
             }
-
-            $this->debug(3, "Found file as: " . $base . $src);
-            $real = $this->realpath($base . $src);
-            if (stripos($real, $this->realpath($docRoot)) !== 0) {
+            // The resolved path (symlinks and ../ resolved) must be inside the document root.
+            if (!$this->isInsideDirectory($real, $realDocRoot)) {
                 $this->debug(1, "Security block: The file specified occurs outside the document root.");
+                continue;
             }
-
+            $this->debug(3, "Found file as: " . $real);
             return $real;
         }
         return false;
     }
 
+    protected function isInsideDirectory($path, $directory)
+    {
+        $path      = str_replace('\\', '/', $path);
+        $directory = rtrim(str_replace('\\', '/', $directory), '/') . '/';
+        return strpos($path, $directory) === 0;
+    }
+
     protected function realpath($path)
     {
-        //try to remove any relative paths
-        $remove_relatives = '@\w+/\.\./@';
-        while (preg_match($remove_relatives, $path)) {
-            $path = preg_replace($remove_relatives, '', $path);
-        }
-        //if any remain use PHP realpath to strip them out, otherwise return $path
-        //if using realpath, any symlinks will also be resolved
-        return preg_match('#^\.\./|/\.\./#', $path) ? realpath($path) : $path;
+        return realpath($path);
     }
 
     protected function toDelete($tempFilePath)
@@ -997,7 +1164,7 @@ Deny from all
             $this->debug(3, "Remote file has invalid mime type: $mimeType");
             @unlink($this->cachefilePath);
             touch($this->cachefilePath);
-            $this->error("The remote file is not a valid image. Mimetype = '" . $mimeType . "'" . $tempFilePath);
+            $this->error("The remote file is not a valid image. Mimetype = '" . $mimeType . "'");
             return false;
         }
 
@@ -1011,11 +1178,12 @@ Deny from all
 
     public function curlWrite($curlHandle, $data, $fileHandle)
     {
-        fwrite($fileHandle, $data);
         $dataSize = strlen($data);
         if ($dataSize + ftell($fileHandle) > config('maxFileSize')) {
-            return 0;
+            $this->lastURLError = 'The remote file is greater than the maximum allowed file size.';
+            return 0; // abort the transfer
         }
+        fwrite($fileHandle, $data);
         return $dataSize;
     }
 
@@ -1063,7 +1231,7 @@ Deny from all
         if (strtolower($mimeType) === 'image/jpg') {
             $mimeType = 'image/jpeg';
         }
-        $gmdate_expires = gmdate('D, d M Y H:i:s', strtotime('now +10 days')) . ' GMT';
+        $gmdate_expires = gmdate('D, d M Y H:i:s', now() + (int) config('browserCache.maxAge')) . ' GMT';
         // send content headers then display image
         header('Content-Type: ' . $mimeType);
         header('Accept-Ranges: none'); //Changed this because we don't accept range requests
@@ -1074,7 +1242,7 @@ Deny from all
             $this->debug(3, "Browser cache is disabled so setting non-caching headers.");
             header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
             header("Pragma: no-cache");
-            header('Expires: ' . gmdate('D, d M Y H:i:s', now()));
+            header('Expires: ' . gmdate('D, d M Y H:i:s', now()) . ' GMT');
         } else {
             $this->debug(3, "Browser caching is enabled");
             header('Cache-Control: max-age=' . config('browserCache.maxAge') . ', must-revalidate');
@@ -1122,16 +1290,18 @@ Deny from all
             return;
         }
 
-        $this->lastBenchTime = microtime(true);
+        $now = microtime(true);
+        $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 1)[0];
         error_log(
             sprintf(
                 "TimThumb Debug line %d [%.6f : %.6f]: %s",
-                __LINE__,
-                (microtime(true) - (float) serverv('REQUEST_TIME_FLOAT', microtime(true))),
-                ($this->lastBenchTime ? microtime(true) - $this->lastBenchTime : 0),
+                $caller['line'] ?? 0,
+                ($now - (float) serverv('REQUEST_TIME_FLOAT', $now)),
+                ($this->lastBenchTime ? $now - $this->lastBenchTime : 0),
                 $msg
             )
         );
+        $this->lastBenchTime = $now;
     }
 
     protected function error($err)
@@ -1150,11 +1320,30 @@ Deny from all
 
     protected function getMimeType($file)
     {
-        $info = getimagesize($file);
+        $info = @getimagesize($file);
         if (isset($info['mime'])) {
             return $info['mime'];
         }
         return '';
+    }
+
+    /**
+     * Estimate the memory GD needs for the source image and the canvas.
+     * A truecolor GD image uses about 4 bytes per pixel plus row overhead, so ~5 bytes per pixel is used.
+     */
+    protected function hasEnoughMemoryFor($srcWidth, $srcHeight, $dstWidth, $dstHeight)
+    {
+        $limit = ini_get('memory_limit');
+        if ($limit === false || (int) $limit <= 0) {
+            return true; // unlimited
+        }
+        // A missing destination dimension is computed later, so assume the configured maximum for it.
+        $dstWidth  = $dstWidth ?: (int) config('maxWidth');
+        $dstHeight = $dstHeight ?: (int) config('maxHeight');
+        $needed    = ($srcWidth * $srcHeight + $dstWidth * $dstHeight) * 5;
+        $available = $this->returnBytes($limit) - memory_get_usage();
+        $this->debug(3, sprintf('Estimated memory needed: %d bytes, available: %d bytes', $needed, $available));
+        return $needed < $available;
     }
 
     protected function setMemoryLimit()
@@ -1201,60 +1390,67 @@ Deny from all
         $this->lastURLError = false;
         $url = str_replace(' ', '%20', $url);
         if (extension_loaded('curl')) {
-            $this->debug(3, "Curl is installed so using it to fetch URL.");
-            $this->curlDataWritten = 0;
-            $this->debug(3, "Fetching url with curl: $url");
-
-            $curlHandle = curl_init($url);
-            $fileHandle = fopen($tempFilePath, 'wb');
-            if (!$fileHandle) {
-                $this->error("Could not open $tempFilePath for writing.");
-                return false;
+            // Redirects are followed manually so that every hop is checked against `allowedSites`.
+            for ($redirects = 0; $redirects <= 5; $redirects++) {
+                $result = $this->curlFetch($url, $tempFilePath);
+                if ($result === false) {
+                    return false;
+                }
+                if ($result === true) {
+                    return true;
+                }
+                // $result is the redirect target
+                if (!$this->isAllowedSiteUrl($result)) {
+                    $this->lastURLError = ' Redirected to a site that is not in `allowedSites`.';
+                    return false;
+                }
+                $url = $result;
             }
-
-            $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36";
-            curl_setopt($curlHandle, CURLOPT_TIMEOUT, config('curlTimeout'));
-            curl_setopt($curlHandle, CURLOPT_USERAGENT, $ua);
-            curl_setopt($curlHandle, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($curlHandle, CURLOPT_HEADER, 0);
-            curl_setopt($curlHandle, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($curlHandle, CURLOPT_FOLLOWLOCATION, 5);
-            curl_setopt($curlHandle, CURLOPT_MAXREDIRS, 10);
-            curl_setopt($curlHandle, CURLOPT_WRITEFUNCTION, function ($curlHandle, $data) use ($fileHandle) {
-                return $this->curlWrite($curlHandle, $data, $fileHandle);
-            });
-            $response = curl_exec($curlHandle);
-            $httpStatus = curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
-
-            // curl_close() has had no effect since PHP 8.0 and is deprecated as of PHP 8.5.
-            // The handle is released automatically when $curlHandle goes out of scope.
-            if ($response === false) {
-                $this->lastURLError = curl_error($curlHandle);
-                fclose($fileHandle);
-                return false;
-            }
-
-            if ($httpStatus == 302) {
-                $this->error("External Image is Redirecting. Try alternate image url");
-                fclose($fileHandle);
-                return false;
-            }
-
-            if ($httpStatus == 404) {
-                $this->set404();
-            }
-
-            fclose($fileHandle);
-            return true;
+            $this->lastURLError = ' Too many redirects.';
+            return false;
         }
 
-        $img = @file_get_contents($url);
-        if ($img === false) {
+        $url = $this->buildSafeUrl($url);
+        if ($url === false) {
+            $this->lastURLError = ' Invalid URL supplied.';
+            return false;
+        }
+        // Without curl the resolved address can not be pinned, so this check is best-effort only.
+        if ($this->resolvePublicIp($url) === false) {
+            $this->lastURLError = ' The host resolves to a private or reserved IP address.';
+            return false;
+        }
+        $context = stream_context_create([
+            'http' => [
+                'follow_location' => 0,
+                'timeout'         => config('curlTimeout'),
+                'ignore_errors'   => true,
+            ],
+        ]);
+        // Read the response headers from the stream metadata instead of $http_response_header,
+        // which is deprecated as of PHP 8.5 (merely mentioning it emits a compile-time notice).
+        $img     = false;
+        $headers = [];
+        $fp = @fopen($url, 'rb', false, $context);
+        if ($fp) {
+            $meta    = stream_get_meta_data($fp);
+            $headers = isset($meta['wrapper_data']) && is_array($meta['wrapper_data']) ? $meta['wrapper_data'] : [];
+            $img     = stream_get_contents($fp, config('maxFileSize') + 1);
+            fclose($fp);
+        }
+        $status = isset($headers[0]) && preg_match('@^HTTP/\S+\s+(\d{3})@', $headers[0], $m)
+            ? (int) $m[1]
+            : 0;
+        if ($img === false || $status < 200 || $status >= 300) {
             $err = error_get_last();
-            $this->lastURLError = !empty($err['message']) ? $err['message'] : 'Unknown error';
-            if (strpos($this->lastURLError, '404') !== false) {
+            $this->lastURLError = $status ? " HTTP status $status" : (!empty($err['message']) ? ' ' . $err['message'] : ' Unknown error');
+            if ($status === 404) {
                 $this->set404();
             }
+            return false;
+        }
+        if (strlen($img) > config('maxFileSize')) {
+            $this->lastURLError = ' The remote file is greater than the maximum allowed file size.';
             return false;
         }
 
@@ -1266,16 +1462,87 @@ Deny from all
         return true;
     }
 
-    protected function serveImg($file)
+    /**
+     * Fetch one URL with curl (without following redirects).
+     * @return bool|string true on success, false on failure, or the redirect target URL
+     */
+    protected function curlFetch($url, $tempFilePath)
     {
-        if (!is_file($file)) {
+        $url = $this->buildSafeUrl($url);
+        if ($url === false) {
+            $this->lastURLError = ' Invalid URL supplied.';
             return false;
         }
-        $mime = mime_content_type($file);
+        $this->debug(3, "Fetching url with curl: $url");
+        $ip = $this->resolvePublicIp($url);
+        if ($ip === false) {
+            $this->lastURLError = ' The host resolves to a private or reserved IP address.';
+            return false;
+        }
+        $fileHandle = fopen($tempFilePath, 'wb');
+        if (!$fileHandle) {
+            $this->error("Could not open temporary file for writing.");
+            return false;
+        }
+
+        $curlHandle = curl_init($url);
+        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36";
+        curl_setopt($curlHandle, CURLOPT_TIMEOUT, config('curlTimeout'));
+        curl_setopt($curlHandle, CURLOPT_USERAGENT, $ua);
+        curl_setopt($curlHandle, CURLOPT_HEADER, false);
+        curl_setopt($curlHandle, CURLOPT_FOLLOWLOCATION, false);
+        if (defined('CURLOPT_PROTOCOLS')) {
+            curl_setopt($curlHandle, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+        }
+        if ($ip !== null) {
+            // Connect to the address we have just checked, so DNS can not be changed in between (DNS rebinding)
+            $parts = parse_url($url);
+            $port  = $parts['port'] ?? (strtolower($parts['scheme']) === 'https' ? 443 : 80);
+            $host  = trim($parts['host'], '[]');
+            $addr  = strpos($ip, ':') !== false ? "[$ip]" : $ip;
+            curl_setopt($curlHandle, CURLOPT_RESOLVE, ["$host:$port:$addr"]);
+        }
+        curl_setopt($curlHandle, CURLOPT_WRITEFUNCTION, function ($curlHandle, $data) use ($fileHandle) {
+            return $this->curlWrite($curlHandle, $data, $fileHandle);
+        });
+        $response   = curl_exec($curlHandle);
+        $httpStatus = (int) curl_getinfo($curlHandle, CURLINFO_HTTP_CODE);
+        $redirectTo = (string) curl_getinfo($curlHandle, CURLINFO_REDIRECT_URL);
+        if ($response === false && !$this->lastURLError) {
+            $this->lastURLError = ' ' . curl_error($curlHandle);
+        }
+        fclose($fileHandle);
+        // curl_close() has had no effect since PHP 8.0 and is deprecated as of PHP 8.5.
+        // The handle is released automatically when $curlHandle goes out of scope.
+
+        if ($response === false) {
+            return false;
+        }
+        if ($httpStatus >= 300 && $httpStatus < 400 && $redirectTo !== '') {
+            $this->debug(3, "Redirected to $redirectTo");
+            return $redirectTo;
+        }
+        if ($httpStatus < 200 || $httpStatus >= 300) {
+            if ($httpStatus === 404) {
+                $this->set404();
+            }
+            $this->lastURLError = " HTTP status $httpStatus";
+            return false;
+        }
+        return true;
+    }
+
+    protected function serveImg($file, $status = 200)
+    {
+        if (!$file || !is_file($file)) {
+            return false;
+        }
+        $mime = $this->getMimeType($file);
         if (!$mime) {
             return false;
         }
 
+        http_response_code($status);
         header('Content-Type: ' . $mime);
         header('Content-Length: ' . filesize($file));
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
