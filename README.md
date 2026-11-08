@@ -185,6 +185,12 @@ The query string parameters are used to specify processing for each image, but t
 - `memoryLimit`
     - Default: '256M'
     - Comment: Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
+- `maxConcurrentProcessing`
+    - Default: 4
+    - Comment: How many images may be resized at the same time on this server. Other requests wait (sleeping, without using memory) until a slot is free. This keeps a page with dozens of new thumbnails from making dozens of PHP workers use up to `memoryLimit` each. 0 = unlimited
+- `processingWaitTimeout`
+    - Default: 20
+    - Comment: Seconds a request waits for a free processing slot. After that it returns an error image with status 503 (not cached, so the next page view tries again)
 - `maxFileSize`
     - Default: 15728640
     - Comment: 15 Megs is 15728640. This is the max internal or external file size that we'll process.
@@ -223,6 +229,12 @@ The query string parameters are used to specify processing for each image, but t
     - `directory`
         - Default: \_\_DIR\_\_ . '/cache'
         - Comment: Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
+    - `sendfile`
+        - Default: ''
+        - Comment: Let the web server send cached images instead of PHP: '' (off), 'X-Sendfile' (Apache mod_xsendfile, lighttpd) or 'X-Accel-Redirect' (nginx). See "Performance" below
+    - `sendfileUri`
+        - Default: ''
+        - Comment: For 'X-Accel-Redirect': the internal nginx location that maps to the cache directory, e.g. '/timthumb-cache/'
 - `maxWidth`
     - Default: 1920
     - Comment: Maximum image width
@@ -279,3 +291,43 @@ The query string parameters are used to specify processing for each image, but t
 - `errorImage`
     - Default: ''
     - Comment: Image to serve if an error occurs instead of the generated error image
+
+## Part 8: Performance
+
+TimThumb is often used for pages with dozens of thumbnails, so each request should stay light.
+
+- **Cached thumbnails** are served with a few file system checks and one file read; repeat visits get `304 Not Modified` or use the browser cache (`browserCache.maxAge`). Old cache files are deleted at most once per `fileCache.timeBetweenCleans`, after the response has been sent.
+- **New thumbnails** are the expensive part. Only one request generates a given thumbnail (concurrent requests for the same image wait for it), and at most `maxConcurrentProcessing` images are resized at the same time.
+- **The cache key** contains the TimThumb version, the image parameters and the settings that change the output (`default`, `png`, `maxWidth`, `maxHeight`). Redeploying the same version keeps the cache; upgrading TimThumb or changing those settings recreates the thumbnails.
+
+### Keep the original images reasonably small
+
+GD always decodes the whole original image before resizing it, so the time and memory needed depend on the size of the original, not of the thumbnail: a 24 megapixel photo needs about 120MB of memory and noticeably more CPU time than a 2 megapixel one. If you upload photos straight from a camera, resize them to the largest size you actually display (e.g. 2000 pixels on the long side) before using them with TimThumb.
+
+### Let the web server send cached images (sendfile)
+
+By default every cached thumbnail is sent by PHP, so a page with 50 thumbnails uses 50 PHP requests. With `fileCache.sendfile`, PHP only checks the cache and the web server sends the file. The cache files are then stored as plain images, so the cache directory must not be publicly accessible (the default `.htaccess` blocks direct access on Apache; on nginx, keep it outside the document root or deny it).
+
+Apache with [mod_xsendfile](https://tn123.org/mod_xsendfile/):
+
+```apache
+XSendFile On
+XSendFilePath /path/to/timthumb/cache
+```
+
+```php
+'fileCache' => ['sendfile' => 'X-Sendfile'],
+```
+
+nginx:
+
+```nginx
+location /timthumb-cache/ {
+    internal;
+    alias /path/to/timthumb/cache/;
+}
+```
+
+```php
+'fileCache' => ['sendfile' => 'X-Accel-Redirect', 'sendfileUri' => '/timthumb-cache/'],
+```
