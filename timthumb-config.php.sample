@@ -7,21 +7,21 @@
  * everytime you download a new version
 */
 
-// Please refer to the defaultConfig() method of the CONF class
+// Please refer to timthumb::$config in timthumb.php for all options and their defaults
 
 return [
-    // 'memoryLimit'  => '30M',
+    // 'memoryLimit'  => '256M',
     // 'maxFileSize'  => 15728640,
     // 'maxWidth'     => 1024,
     // 'maxHeight'    => 768,
     // 'allowedSites' => ['img.youtube.com','tinypic.com'],
     // 'fileCache' => [
-    //     'maxFileAge' => 60*60*24,
+    //     'maxFileAge' => 60*60*24*7,
     //     'directory'  => __DIR__ . '/cache',
     // ],
     // Image to serve if any 404 occurs
     // 'notFoundImage'          => '/images/not-found.png',
-// 'default' => [
+    // 'default' => [
     //     'q' => 83,
     //     'w' => 300,
     //     'h' => 300,

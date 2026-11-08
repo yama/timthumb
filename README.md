@@ -16,6 +16,8 @@ In this post, I will explain the basic usage of the script, namely the minimal p
 
 ### Basic Setup
 
+Requirements: PHP 7.4 or later with the GD extension (curl is recommended for external images).
+
 Setting up TimThumb is very easy. All you need to do is place 'timthumb.php' on your server. Although a directory is needed to save the cache files, this will be automatically generated when you run timthumb for the first time. If it doesn't get generated, create a directory manually named 'cache' and set the permissions to 775.
 
 ### Basic Usage
@@ -35,8 +37,8 @@ The following parameters are mainly used. With these, you can resize almost any 
 ```
 
 - `src` The only required parameter. Specifies the path to the image. You can also specify the URL of an image from an external site (※configuration required).
-- `w` and `h` Width and height. Optional. If omitted, it will be trimmed/resized to default dimensions (100 x 100).
-- `q` Quality. Specifies the compression level of the image. The default is 85. You can specify 100, but it won't make the image any larger or more beautiful than the original.
+- `w` and `h` Width and height. Optional. If omitted, it will be trimmed/resized to default dimensions (200 x 200).
+- `q` Quality. Specifies the compression level of the image. The default is 85. You can specify up to 100, but it won't make the image any larger or more beautiful than the original.
 
 With just these parameters, you can easily integrate it into your site.
 
@@ -157,28 +159,28 @@ The new scaling modes added by the &zc parameter are as follows:
 | `?src`     |         | [source] Instructs TimThumb which image to resize                 | URL of the image |
 | `&w`       | 200     | [width] Width after resizing. To scale proportionally             | Numeric Value   |
 | `&h`       | 200     | [height] Height after resizing. To scale proportionally           | Numeric Value   |
-| `&q`       | 85      | [quality] Compression quality. Higher values mean better image quality but it's not recommended to go above 95 as the image may become too large | 1 to 99        |
+| `&q`       | 85      | [quality] Compression quality. Higher values mean better image quality but it's not recommended to go above 95 as the image may become too large | 0 to 100       |
 | `&zc`      | 1       | [zoom/crop] Settings for cropping and scaling                        | 0, 1, 2, 3      |
 | `&a`       | c       | [alignment] Alignment for cropping with positions that can be combined for diagonal alignment  | c, t, l, r, b, tl, tr, bl, br |
 | `&f`       | 0       | [filters] Apply image filters like brightness/contrast or blur to modify the resized image | Varies         |
-| `&s`       | 0       | [sharpen] Applying a sharp filter makes the resized image appear slightly sharper | Numeric Value   |
+| `&s`       | 0       | [sharpen] Applying a sharp filter makes the resized image appear slightly sharper | 1 or 0          |
 | `&cc`      | ffffff  | [canvas colour] Changes the background color, useful when changing zoom or trimming settings, and might add borders to the image | Hex Value       |
 | `&ct`      | 1       | [canvas transparency] Utilizes transparency, making the background color null | 1 or 0 |
 
 ## Part 7: Configuration
 
-The query string parameters are used to specify processing for each image, but the settings introduced here are for specifying the behavior of TimThumb itself. First, rename the file named 'timthumb-config.php.sample' to 'timthumb-config.php'. Then, extract the necessary settings from the CONF configuration within the 'timthumb.php' file, and write them into the 'timthumb-config.php' file.
+The query string parameters are used to specify processing for each image, but the settings introduced here are for specifying the behavior of TimThumb itself. First, rename the file named 'timthumb-config.php.sample' to 'timthumb-config.php'. Then, copy the settings you want to change from `timthumb::$config` in 'timthumb.php', and write them into the 'timthumb-config.php' file.
 
 - `debug`
     - `level`
-        - Default: 1
-        - Comment: Debug level 1 is less noisy, while 3 is the most verbose. Set to 0 to disable
+        - Default: 0
+        - Comment: Debug level (written to the PHP error log). 1 is less noisy, while 3 is the most verbose. Set to 0 to disable
     - `displayErrorMessages`
         - Default: true
         - Comment: Display error messages. Set to false to turn off errors (good for production websites)
 - `memoryLimit`
-    - Default: '30M'
-    - Comment: Set PHP memory limit
+    - Default: '256M'
+    - Comment: Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
 - `maxFileSize`
     - Default: 15728640
     - Comment: 15 Megs is 15728640. This is the max internal or external file size that we'll process.
@@ -187,7 +189,7 @@ The query string parameters are used to specify processing for each image, but t
     - Comment: Timeout duration for Curl. This only applies if you have Curl installed and aren't using PHP's default URL fetching mechanism.
 - `allowedSites`
     - Default: []
-    - Comment: Allowed external websites. Example: ['usercontent.google.com', 'img.youtube.com']
+    - Comment: Allowed external websites. Subdomains are also allowed (e.g. 'example.com' allows 'img.example.com'). Redirects are only followed to allowed sites. Example: ['usercontent.google.com', 'img.youtube.com']
 - `browserCache`
     - `maxAge`
         - Default: 60\*60\*24\*10
@@ -203,7 +205,7 @@ The query string parameters are used to specify processing for each image, but t
         - Default: 60\*60\*24
         - Comment: How often the cache is cleaned
     - `maxFileAge`
-        - Default: 60\*60\*24
+        - Default: 60\*60\*24\*7
         - Comment: How old does a file have to be to be deleted from the cache
     - `suffix`
         - Default: '.cache'
@@ -212,7 +214,7 @@ The query string parameters are used to specify processing for each image, but t
         - Default: 'timthumb'
         - Comment: What to put at the beg of all files in the cache directory so we can identify them
     - `directory`
-        - Default: './cache'
+        - Default: \_\_DIR\_\_ . '/cache'
         - Comment: Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
 - `maxWidth`
     - Default: 1920
@@ -245,7 +247,7 @@ The query string parameters are used to specify processing for each image, but t
 - `png`
     - `isTransparent`
         - Default: false
-        - Comment: Define if a png image should have a transparent background color. Use False value if you want to display a custom coloured canvas_colour
+        - Comment: Kept for compatibility with the original TimThumb and its meaning is inverted: false = the canvas behind PNGs is transparent (unless `ct=0`), true = the canvas is filled with the `cc` colour
     - `optipngEnabled`
         - Default: false
         - Comment:
@@ -258,55 +260,12 @@ The query string parameters are used to specify processing for each image, but t
     - `pngcrushPath`
         - Default: '/usr/bin/pngcrush'
         - Comment: This will only run if `png.optipngPath` is not set or is not valid
-- `webshot`
-    - `enabled`
-        - Default: false
-        - Comment: Beta feature. Adding webshot=1 to your query string will cause the script to return a browser screenshot rather than try to fetch an image.
-    - `cutyCapt`
-        - Default: '/usr/local/bin/CutyCapt'
-        - Comment: The path to CutyCapt.
-    - `xvfb`
-        - Default: '/usr/bin/xvfb-run'
-        - Comment: The path to the Xvfb server
-    - `screenX`
-        - Default: '1024'
-        - Comment: 1024 works ok
-    - `screenY`
-        - Default: '768'
-        - Comment: 768 works ok
-    - `colorDepth`
-        - Default: '24'
-        - Comment: I haven't tested anything besides 24
-    - `imageFormat`
-        - Default: 'png'
-        - Comment: png is about 2.5 times the size of jpg but is a LOT better quality
-    - `timeout`
-        - Default: '20'
-        - Comment: Seconds to wait for a webshot
-    - `userAgent`
-        - Default: "Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0"
-        - Comment: I hate to do this, but a non-browser robot user agent might not show what humans see. So we pretend to be Firefox
-    - `javascriptOn`
-        - Default: true
-        - Comment: Setting to false might give you a slight speedup and block ads. But it could cause other issues.
-    - `javaOn`
-        - Default: false
-        - Comment: Have only tested this as false
-    - `pluginsOn`
-        - Default: true
-        - Comment: Enable flash and other plugins
-    - `proxy`
-        - Default: ''
-        - Comment: In case you're behind a proxy server.
-    - `xvfbRunning`
-        - Default: false
-        - Comment: ADVANCED: Enable this if you've got Xvfb running in the background.
 - `waitBetweenFetchErrors`
     - Default: 3600
     - Comment: Time to wait between errors fetching remote file
 - `blockExternalLeechers`
     - Default: false
-    - Comment: If the image or webshot is being loaded on an external site, display a red "No Hotlinking" gif.
+    - Comment: If the image is being loaded on an external site, display a red "No Hotlinking" gif.
 - `notFoundImage`
     - Default: ''
     - Comment: Image to serve if any 404 occurs
