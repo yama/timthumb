@@ -1091,8 +1091,9 @@ Options -Indexes
         //Candidate locations: under docRoot, as an absolute path, then relative to each directory between docRoot and this script.
         $candidates = [$docRoot . '/' . $src, '/' . $src];
         $scriptDir = str_replace('\\', '/', dirname(serverv('SCRIPT_FILENAME')));
-        $base = rtrim($docRoot, '/');
-        $relative = (strpos($scriptDir, $base) === 0) ? substr($scriptDir, strlen($base)) : '';
+        // Normalize both sides to "/" so the prefix check also works with Windows paths (C:\inetpub\wwwroot)
+        $base = rtrim(str_replace('\\', '/', $docRoot), '/');
+        $relative = (stripos($scriptDir, $base) === 0) ? substr($scriptDir, strlen($base)) : '';
         foreach (explode('/', $relative) as $sub) {
             if ($sub !== '') {
                 $base .= '/' . $sub;
