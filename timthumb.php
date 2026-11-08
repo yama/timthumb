@@ -576,7 +576,7 @@ Options -Indexes
 
         $reqWidth  = (int) getv('w', 0);
         $reqHeight = (int) getv('h', 0);
-        $width     = $reqWidth > 0 ? max(16, min($reqWidth, (int) config('maxWidth'))) : 400;
+        $width     = min($reqWidth > 0 ? max(16, $reqWidth) : 400, max(16, (int) config('maxWidth')));
 
         if (config('debug.displayErrorMessages')) {
             $messages = array_merge(['TimThumb error:'], $this->errors);
@@ -594,9 +594,15 @@ Options -Indexes
         }
 
         $textHeight = count($lines) * $lineHeight + 2 * $padding;
-        $height     = $reqHeight > 0
-            ? max(16, min($reqHeight, (int) config('maxHeight')))
-            : max(100, min($textHeight, (int) config('maxHeight')));
+        $height     = min(
+            $reqHeight > 0 ? max(16, $reqHeight) : max(100, $textHeight),
+            max(16, (int) config('maxHeight'))
+        );
+
+        // The error may itself be caused by low memory, so do not risk a fatal error while drawing it.
+        if (!$this->hasEnoughMemoryFor(0, 0, $width, $height)) {
+            return false;
+        }
 
         $image = imagecreatetruecolor($width, $height);
         if (!$image) {
