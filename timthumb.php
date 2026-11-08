@@ -876,14 +876,19 @@ Options -Indexes
             // apply filters to image
             $filterList = explode('|', $filters);
             foreach ($filterList as $fl) {
-                $settings = array_map('intval', explode(',', $fl));
-                if (!isset($imageFilters[$settings[0]])) {
+                $settings = explode(',', $fl);
+                // Look up by the raw string so malformed IDs such as "3junk" are ignored, not cast to 3.
+                $filterId = $settings[0];
+                if (!isset($imageFilters[$filterId])) {
                     continue;
                 }
-                [$filter, $argCount] = $imageFilters[$settings[0]];
-                // Pass exactly the number of arguments the filter expects (missing ones default to 0).
-                // PHP 8 throws ArgumentCountError when extra arguments are given.
-                $args = array_pad(array_slice($settings, 1, $argCount), $argCount, 0);
+                [$filter, $argCount] = $imageFilters[$filterId];
+                // imagefilter() rejects extra arguments since PHP 8, so pass exactly the required number.
+                // The smooth filter takes a float weight (e.g. f=11,0.5); the others take ints.
+                $args = array_map(
+                    $filter === IMG_FILTER_SMOOTH ? 'floatval' : 'intval',
+                    array_pad(array_slice($settings, 1, $argCount), $argCount, 0)
+                );
                 imagefilter($canvas, $filter, ...$args);
             }
         }
@@ -1422,13 +1427,23 @@ Options -Indexes
                 'ignore_errors'   => true,
             ],
         ]);
-        $img = @file_get_contents($url, false, $context, 0, config('maxFileSize') + 1);
-        $status = isset($http_response_header[0]) && preg_match('@^HTTP/\S+\s+(\d{3})@', $http_response_header[0], $m)
+        // Read the response headers from the stream metadata instead of $http_response_header,
+        // which is deprecated as of PHP 8.5 (merely mentioning it emits a compile-time notice).
+        $img     = false;
+        $headers = [];
+        $fp = @fopen($url, 'rb', false, $context);
+        if ($fp) {
+            $meta    = stream_get_meta_data($fp);
+            $headers = isset($meta['wrapper_data']) && is_array($meta['wrapper_data']) ? $meta['wrapper_data'] : [];
+            $img     = stream_get_contents($fp, config('maxFileSize') + 1);
+            fclose($fp);
+        }
+        $status = isset($headers[0]) && preg_match('@^HTTP/\S+\s+(\d{3})@', $headers[0], $m)
             ? (int) $m[1]
             : 0;
         if ($img === false || $status < 200 || $status >= 300) {
             $err = error_get_last();
-            $this->lastURLError = $status ? " HTTP status $status" : (is_array($err) ? $err['message'] : '');
+            $this->lastURLError = $status ? " HTTP status $status" : (!empty($err['message']) ? ' ' . $err['message'] : ' Unknown error');
             if ($status === 404) {
                 $this->set404();
             }
@@ -1497,9 +1512,8 @@ Options -Indexes
             $this->lastURLError = ' ' . curl_error($curlHandle);
         }
         fclose($fileHandle);
-        if (PHP_VERSION_ID < 80000) {
-            curl_close($curlHandle);
-        }
+        // curl_close() has had no effect since PHP 8.0 and is deprecated as of PHP 8.5.
+        // The handle is released automatically when $curlHandle goes out of scope.
 
         if ($response === false) {
             return false;
@@ -1600,7 +1614,7 @@ function config($key, $default = null) {
 
 function getv($key, $default = '')
 {
-    // Only scalar values are accepted (e.g. `?w[]=1` is ignored)
+    // Ignore array input such as ?w[]=1 to avoid TypeErrors in string/number functions.
     if (!isset($_GET[$key]) || !is_string($_GET[$key])) {
         return $default;
     }
