@@ -32,7 +32,7 @@ class timthumb
         ],
         'memoryLimit'   => '256M', // Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
         'maxConcurrentProcessing' => 4, // How many images may be resized at the same time on this server. Other requests wait instead of using memory and CPU. 0 = unlimited
-        'processingWaitTimeout'   => 20, // Seconds a request waits for a free processing slot before giving up with an error image (503)
+        'processingWaitTimeout'   => 20, // Seconds a request may wait for other requests (the same image being generated, or a free processing slot) before giving up with an error image (503)
         'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
         'curlTimeout'   => 20, // Timeout in seconds for fetching external images. External images require the PHP curl extension.
         // Allowed external websites. Hosts must match exactly; prefix with a dot to also allow subdomains.
@@ -102,6 +102,7 @@ class timthumb
     protected $lastBenchTime   = 0;
     protected $debugLevel      = 0;
     protected $isBusy          = false;
+    protected $waitDeadline    = null;
     // The cache key contains $version and this number. Increase it to force all cache files to be recreated.
     protected $fileCacheVersion = 1;
     //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
@@ -263,7 +264,9 @@ class timthumb
         $lockFile = $this->cachefilePath . '.lock';
         $lock     = $this->acquireLock($lockFile);
         if (!$lock) {
-            return $this->error('Could not get a lock for writing an image.');
+            return $this->error($this->isBusy
+                ? 'The server is busy processing other images. Please try again.'
+                : 'Could not get a lock for writing an image.');
         }
         clearstatcache();
         if (config('fileCache.enabled') && is_file($this->cachefilePath)) {
@@ -299,6 +302,7 @@ class timthumb
      * Open and exclusively lock a lock file (blocking). The holder deletes the file in releaseLock(),
      * so a lock taken on a file that was deleted in the meantime is retried on the new file.
      * A retry only happens after another request has finished with the lock, so this always makes progress.
+     * Waiting is limited by waitDeadline(); after that the request fails as busy (503).
      * @return resource|false
      */
     protected function acquireLock($path)
@@ -308,9 +312,13 @@ class timthumb
             if (!$fh) {
                 return false;
             }
-            if (!flock($fh, LOCK_EX)) {
-                fclose($fh);
-                return false;
+            while (!flock($fh, LOCK_EX | LOCK_NB)) {
+                if (microtime(true) >= $this->waitDeadline()) {
+                    fclose($fh);
+                    $this->isBusy = true;
+                    return false;
+                }
+                usleep(mt_rand(20000, 50000));
             }
             $locked = fstat($fh);
             clearstatcache(true, $path);
@@ -321,6 +329,19 @@ class timthumb
             fclose($fh);
         }
         return false;
+    }
+
+    /**
+     * The time until which this request may wait for other requests (the same image being generated, or a
+     * free processing slot). It starts with the first wait, so a request waits at most `processingWaitTimeout`
+     * seconds in total, not counting its own work.
+     */
+    protected function waitDeadline()
+    {
+        if ($this->waitDeadline === null) {
+            $this->waitDeadline = microtime(true) + max(0, (float) config('processingWaitTimeout'));
+        }
+        return $this->waitDeadline;
     }
 
     protected function releaseLock($fh, $path = null)
@@ -346,7 +367,6 @@ class timthumb
         if ($max <= 0) {
             return null;
         }
-        $deadline = microtime(true) + max(0, (float) config('processingWaitTimeout'));
         $handles  = [];
         for ($i = 0; $i < $max; $i++) {
             $handles[$i] = @fopen(sprintf('%s/%s_slot_%d.lock', $this->cacheDirectory, config('fileCache.prefix'), $i), 'c');
@@ -355,7 +375,7 @@ class timthumb
             $this->debug(1, 'Could not create the processing slot files, so processing without a limit.');
             return null;
         }
-        do {
+        while (true) {
             foreach ($handles as $i => $fh) {
                 if ($fh && flock($fh, LOCK_EX | LOCK_NB)) {
                     foreach ($handles as $j => $other) {
@@ -367,8 +387,11 @@ class timthumb
                     return $fh;
                 }
             }
+            if (microtime(true) >= $this->waitDeadline()) {
+                break;
+            }
             usleep(mt_rand(30000, 80000));
-        } while (microtime(true) < $deadline);
+        }
 
         foreach ($handles as $fh) {
             if ($fh) {
@@ -1259,7 +1282,7 @@ Options -Indexes
             }
             return $this->error('Could not write the cache file.');
         }
-        @unlink($this->cachefilePath); //rename generally overwrites, but doing this in case of platform specific quirks. File might not exist yet.
+        // rename() replaces the old file atomically (also on Windows), so readers always find a complete file.
         if (!rename($tempFilePath, $this->cachefilePath)) {
             @unlink($tempFilePath);
             return $this->error('Could not write the cache file.');

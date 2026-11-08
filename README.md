@@ -190,7 +190,7 @@ The query string parameters are used to specify processing for each image, but t
     - Comment: How many images may be resized at the same time on this server. Other requests wait (sleeping, without using memory) until a slot is free. This keeps a page with dozens of new thumbnails from making dozens of PHP workers use up to `memoryLimit` each. 0 = unlimited
 - `processingWaitTimeout`
     - Default: 20
-    - Comment: Seconds a request waits for a free processing slot. After that it returns an error image with status 503 (not cached, so the next page view tries again)
+    - Comment: Seconds a request may wait in total for other requests (the same image being generated, or a free processing slot). After that it returns an error image with status 503 (not cached, so the next page view tries again). If you use slow external image hosts, keep this at least as long as `curlTimeout`
 - `maxFileSize`
     - Default: 15728640
     - Comment: 15 Megs is 15728640. This is the max internal or external file size that we'll process.
