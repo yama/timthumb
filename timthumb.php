@@ -23,7 +23,7 @@ $timthumb->start();
 
 class timthumb
 {
-    public $version = '2.10.0'; // Version of this script
+    public $version = '2.11.0'; // Version of this script (part of the cache key, so a new version regenerates the cache)
 
     public static $config = [
         'debug' => [
@@ -31,6 +31,8 @@ class timthumb
             'displayErrorMessages' => true, // Show error details in the error image. Set to false to show only a generic error image (good for production websites)
         ],
         'memoryLimit'   => '256M', // Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
+        'maxConcurrentProcessing' => 4, // How many images may be resized at the same time on this server. Other requests wait instead of using memory and CPU. 0 = unlimited
+        'processingWaitTimeout'   => 20, // Seconds a request may wait for other requests (the same image being generated, or a free processing slot) before giving up with an error image (503)
         'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
         'curlTimeout'   => 20, // Timeout in seconds for fetching external images. External images require the PHP curl extension.
         // Allowed external websites. Hosts must match exactly; prefix with a dot to also allow subdomains.
@@ -94,7 +96,10 @@ class timthumb
     protected $toDeletes       = [];
     protected $cacheDirectory  = '';
     protected $lastBenchTime   = 0;
-    //Generally if timthumb.php is modifed (upgraded) then the salt changes and all cache files are recreated. This is a backup mechanism to force regen.
+    protected $debugLevel      = 0;
+    protected $isBusy          = false;
+    protected $waitedSeconds   = 0.0;
+    // The cache key contains $version and this number. Increase it to force all cache files to be recreated.
     protected $fileCacheVersion = 1;
     //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
     protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //";
@@ -127,12 +132,17 @@ class timthumb
             return;
         }
 
+        $this->debugLevel = (int) config('debug.level');
         date_default_timezone_set('UTC');
-        $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), serverv('REQUEST_URI')));
+        if ($this->debugLevel >= 1) {
+            $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), serverv('REQUEST_URI')));
+        }
         $this->cacheDirectory = $this->getCacheDirectory();
 
-        //Clean the cache before we do anything because we don't want the first visitor after config('fileCache.timeBetweenCleans') expires to get a stale image.
-        $this->cleanCache();
+        // Clean the cache after the response has been sent, so that no visitor has to wait for it.
+        if ($this->cacheDirectory) {
+            register_shutdown_function([$this, 'cleanCache']);
+        }
 
         $this->myHost = preg_replace('@^www\.@i', '', serverv('HTTP_HOST'));
         $this->src    = getv('src');
@@ -163,9 +173,8 @@ class timthumb
         } else {
             $this->debug(2, 'Is a request for an internal file: ' . $this->src);
         }
-        //On windows systems I'm assuming fileinode returns an empty string or a number that doesn't change. Check this.
-        $salt = @filemtime(__FILE__) . '-' . @fileinode(__FILE__);
-        $this->debug(3, 'Salt is: ' . $salt);
+        // The salt does not use the mtime of this file, so that redeploying the same version keeps the cache.
+        $salt = $this->version . '-';
 
         if ($this->isExternalURL) {
             $this->cachefilePath = $this->generateCacheFilePath(
@@ -191,7 +200,7 @@ class timthumb
     }
 
     /**
-     * Build the part of the cache key that depends on the request.
+     * Build the part of the cache key that depends on the request and on the settings that change the output.
      * Only parameters that affect the output are used, so that arbitrary
      * extra query parameters can not be used to fill the cache directory.
      */
@@ -201,6 +210,12 @@ class timthumb
         foreach (['src', 'w', 'h', 'zc', 'q', 'a', 'f', 's', 'cc', 'ct'] as $key) {
             $params[$key] = getv($key, null);
         }
+        $params['config'] = [
+            config('default'),
+            config('png'),
+            config('maxWidth'),
+            config('maxHeight'),
+        ];
         return serialize($params);
     }
 
@@ -230,12 +245,7 @@ class timthumb
 
     public function run()
     {
-        if (!$this->isExternalURL) {
-            $this->debug(3, 'Got request for internal image. Starting serveInternalImage()');
-            return $this->serveInternalImage();
-        }
-
-        if (!config('allowedSites') || !config('allowExternal', true)) {
+        if ($this->isExternalURL && (!config('allowedSites') || !config('allowExternal', true))) {
             $this->debug(
                 1,
                 'Got a request for an external image but there are no allowed sites specified in the `allowedSites` option, so returning an error message.'
@@ -244,8 +254,148 @@ class timthumb
             return false;
         }
 
-        $this->debug(3, 'Got request for external image. Starting serveExternalImage.');
-        return $this->serveExternalImage();
+        // Only one request generates a given cache file; concurrent requests for the same image wait here
+        // and then serve the result, instead of all decoding (or downloading) the same image at once.
+        $lockFile = $this->cachefilePath . '.lock';
+        $lock     = $this->acquireLock($lockFile);
+        if (!$lock) {
+            return $this->error($this->isBusy
+                ? 'The server is busy processing other images. Please try again.'
+                : 'Could not get a lock for writing an image.');
+        }
+        clearstatcache();
+        if (config('fileCache.enabled') && is_file($this->cachefilePath)) {
+            $this->debug(3, 'The cache file was created while waiting for the lock.');
+            if ($this->tryServerCache()) {
+                $this->releaseLock($lock, $lockFile);
+                return true;
+            }
+            if ($this->errors) {
+                $this->releaseLock($lock, $lockFile);
+                return false;
+            }
+        }
+
+        if ($this->isExternalURL) {
+            $this->debug(3, 'Got request for external image. Starting generateExternalImage.');
+            $image = $this->generateExternalImage();
+        } else {
+            $this->debug(3, 'Got request for internal image. Starting generateInternalImage()');
+            $image = $this->generateInternalImage();
+        }
+        $this->releaseLock($lock, $lockFile);
+
+        if (!$image) {
+            return false;
+        }
+        $this->sendImageHeaders($image['type'], strlen($image['data']), $this->cacheFileMTime());
+        echo $image['data'];
+        return true;
+    }
+
+    /**
+     * Open and exclusively lock a lock file (blocking). The holder deletes the file in releaseLock(),
+     * so a lock taken on a file that was deleted in the meantime is retried on the new file.
+     * A retry only happens after another request has finished with the lock, so this always makes progress.
+     * Waiting is limited by waitFor(); after that the request fails as busy (503).
+     * @return resource|false
+     */
+    protected function acquireLock($path)
+    {
+        for ($try = 0; $try < 1000; $try++) {
+            $fh = @fopen($path, 'c');
+            if (!$fh) {
+                return false;
+            }
+            $locked = $this->waitFor(function () use ($fh) {
+                return flock($fh, LOCK_EX | LOCK_NB);
+            });
+            if (!$locked) {
+                fclose($fh);
+                $this->isBusy = true;
+                return false;
+            }
+            $locked = fstat($fh);
+            clearstatcache(true, $path);
+            $current = @stat($path);
+            if ($current && $locked['ino'] === $current['ino'] && $locked['dev'] === $current['dev']) {
+                return $fh;
+            }
+            fclose($fh);
+        }
+        return false;
+    }
+
+    /**
+     * Call $attempt until it returns something other than false, sleeping in between.
+     * The time spent waiting here (for the same image being generated, or a free processing slot) is added up per
+     * request and limited to `processingWaitTimeout` in total; the request's own work (e.g. downloading) is not counted.
+     * @return mixed the result of $attempt, or false when the waiting time ran out
+     */
+    protected function waitFor(callable $attempt)
+    {
+        $start = microtime(true);
+        $left  = max(0, (float) config('processingWaitTimeout')) - $this->waitedSeconds;
+        while (true) {
+            $result = $attempt();
+            $waited = microtime(true) - $start;
+            if ($result !== false || $waited >= $left) {
+                $this->waitedSeconds += $waited;
+                return $result;
+            }
+            usleep(mt_rand(20000, 60000));
+        }
+    }
+
+    protected function releaseLock($fh, $path = null)
+    {
+        if (!$fh) {
+            return;
+        }
+        if ($path !== null) {
+            @unlink($path); // before unlocking, so that waiting requests notice that the file was replaced
+        }
+        flock($fh, LOCK_UN);
+        fclose($fh);
+    }
+
+    /**
+     * Limit how many images are decoded and resized at the same time (`maxConcurrentProcessing`),
+     * so that a page with dozens of new thumbnails does not make dozens of PHP workers use ~`memoryLimit` each.
+     * @return resource|null|false a slot lock, null when there is no limit, false when no slot became free in time
+     */
+    protected function acquireProcessingSlot()
+    {
+        $max = (int) config('maxConcurrentProcessing');
+        if ($max <= 0) {
+            return null;
+        }
+        $handles  = [];
+        for ($i = 0; $i < $max; $i++) {
+            $handles[$i] = @fopen(sprintf('%s/%s_slot_%d.lock', $this->cacheDirectory, config('fileCache.prefix'), $i), 'c');
+        }
+        if (!array_filter($handles)) {
+            $this->debug(1, 'Could not create the processing slot files, so processing without a limit.');
+            return null;
+        }
+        $slot = $this->waitFor(function () use ($handles) {
+            foreach ($handles as $i => $fh) {
+                if ($fh && flock($fh, LOCK_EX | LOCK_NB)) {
+                    return $i;
+                }
+            }
+            return false;
+        });
+        foreach ($handles as $i => $fh) {
+            if ($fh && $i !== $slot) {
+                fclose($fh);
+            }
+        }
+        if ($slot === false) {
+            return false;
+        }
+        $this->debug(3, "Got processing slot $slot");
+        return $handles[$slot];
     }
 
     protected function generateCacheFilePath($seedString) {
@@ -471,7 +621,8 @@ class timthumb
         }
 
         if (config('fileCache.directory') !== sys_get_temp_dir()) {
-            if (!touch(config('fileCache.directory') . '/index.html')) {
+            $indexFile = config('fileCache.directory') . '/index.html';
+            if (!is_file($indexFile) && !touch($indexFile)) {
                 $this->error(
                     'Could not create the index.html file - to fix this create an empty file named index.html file in the cache directory.'
                 );
@@ -513,7 +664,7 @@ Options -Indexes
             return false;
         }
 
-        $status = $this->is404() ? 404 : 400;
+        $status = $this->is404() ? 404 : ($this->isBusy ? 503 : 400);
 
         if (config('notFoundImage') && $this->is404()) {
             if ($this->serveImg($this->resolveConfiguredImage(config('notFoundImage')), $status)) {
@@ -731,40 +882,39 @@ Options -Indexes
             3,
             "Failed to serve cachefile " . $this->cachefilePath . " - Deleting it from cache."
         );
-        //Image serving failed. We can't retry at this point, but lets remove it from cache so the next request recreates it
+        // Nothing has been sent yet, so remove the broken (or vanished) cache file and let the image be recreated.
         @unlink($this->cachefilePath);
-        return true;
+        return false;
     }
 
-    protected function serveInternalImage()
+    /**
+     * @return array|false ['type' => 'jpg'|'png'|'gif', 'data' => image bytes]
+     */
+    protected function generateInternalImage()
     {
         $this->debug(3, "Local image path is $this->localImagePath");
         if (!$this->localImagePath) {
-            $this->sanityFail("localImage not set after verifying it earlier in the code.");
-            return false;
+            return $this->sanityFail("localImage not set after verifying it earlier in the code.");
         }
         $fileSize = filesize($this->localImagePath);
         if ($fileSize > config('maxFileSize')) {
-            $this->error("The file you specified is greater than the maximum allowed file size.");
-            return false;
+            return $this->error("The file you specified is greater than the maximum allowed file size.");
         }
         if ($fileSize <= 0) {
-            $this->error("The file you specified is <= 0 bytes.");
-            return false;
+            return $this->error("The file you specified is <= 0 bytes.");
         }
         $this->debug(3, "Calling processImageAndWriteToCache() for local image.");
-        if (!$this->processImageAndWriteToCache($this->localImagePath)) {
-            return false;
-        }
-
-        $this->serveCacheFile();
-        return true;
+        return $this->processImageAndWriteToCache($this->localImagePath);
     }
 
-    protected function cleanCache()
+    /**
+     * Delete cache files older than `fileCache.maxFileAge`, at most once per `fileCache.timeBetweenCleans`.
+     * Runs as a shutdown function: when cleaning is due, the response is finished first so that the visitor does not wait.
+     */
+    public function cleanCache()
     {
-        if (config('fileCache.timeBetweenCleans') < 0) {
-            return true;
+        if (!$this->cacheDirectory || config('fileCache.timeBetweenCleans') < 0) {
+            return false;
         }
 
         $this->debug(3, "cleanCache() called");
@@ -773,50 +923,106 @@ Options -Indexes
         //If this is a new timthumb installation we need to create the file
         if (!is_file($lastCleanFile)) {
             $this->debug(1, "File tracking last clean doesn't exist. Creating $lastCleanFile");
-            if (!touch($lastCleanFile)) {
-                $this->error("Could not create cache clean timestamp file.");
+            if (!@touch($lastCleanFile)) {
+                $this->debug(1, "Could not create cache clean timestamp file.");
             }
             return false;
         }
-        //Cache was last cleaned more than 1 day ago
-        if (@filemtime($lastCleanFile) < (now() - config('fileCache.timeBetweenCleans'))) {
-            $this->debug(
-                1,
-                sprintf(
-                    "Cache was last cleaned more than %d seconds ago. Cleaning now.",
-                    config('fileCache.timeBetweenCleans')
-                )
-            );
-            // Very slight race condition here, but worst case we'll have 2 or 3 servers cleaning the cache simultaneously once a day.
-            if (!touch($lastCleanFile)) {
-                $this->error("Could not create cache clean timestamp file.");
-            }
-            $files = glob($this->cacheDirectory . '/*' . config('fileCache.suffix'));
-            if ($files) {
-                $timeAgo = now() - config('fileCache.maxFileAge');
-                foreach ($files as $file) {
-                    if (@filemtime($file) < $timeAgo) {
-                        $this->debug(
-                            3,
-                            sprintf(
-                                "Deleting cache file $file older than max age: %d seconds",
-                                config('fileCache.maxFileAge')
-                            )
-                        );
-                        @unlink($file);
-                    }
-                }
-            }
-            return true;
+        if (@filemtime($lastCleanFile) >= (now() - config('fileCache.timeBetweenCleans'))) {
+            $this->debug(3, "Cache was cleaned less than " . config('fileCache.timeBetweenCleans') . " seconds ago so no cleaning needed.");
+            return false;
         }
 
-        $this->debug(3, "Cache was cleaned less than " . config('fileCache.timeBetweenCleans') . " seconds ago so no cleaning needed.");
-        return false;
+        $this->debug(
+            1,
+            sprintf(
+                "Cache was last cleaned more than %d seconds ago. Cleaning now.",
+                config('fileCache.timeBetweenCleans')
+            )
+        );
+        // Very slight race condition here, but worst case we'll have 2 or 3 servers cleaning the cache simultaneously once a day.
+        if (!@touch($lastCleanFile)) {
+            $this->debug(1, "Could not update cache clean timestamp file.");
+            return false;
+        }
+
+        // Send the response to the visitor before the (possibly slow) directory scan.
+        ignore_user_abort(true);
+        while (ob_get_level() > 0 && @ob_end_flush()) {
+            // send PHP's output buffers (e.g. `output_buffering`) first
+        }
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        } elseif (function_exists('litespeed_finish_request')) {
+            litespeed_finish_request();
+        } else {
+            flush();
+        }
+
+        // readdir() instead of glob(), so that a large cache directory is not loaded into memory at once.
+        $dh = @opendir($this->cacheDirectory);
+        if (!$dh) {
+            return false;
+        }
+        // Cache files (and lock files left by a crashed request) are named <prefix>_int_<md5><suffix>[.lock]
+        // (or _ext_); matching the whole name also works with an empty suffix and leaves other files alone,
+        // including those of another installation that uses a different prefix in a shared directory.
+        $cachePattern = '/^' . preg_quote((string) config('fileCache.prefix'), '/')
+            . '_(?:int|ext)_[0-9a-f]{32}' . preg_quote((string) config('fileCache.suffix'), '/') . '(\.lock)?$/';
+        $timeAgo      = now() - config('fileCache.maxFileAge');
+        while (($entry = readdir($dh)) !== false) {
+            $isCacheFile = preg_match($cachePattern, $entry, $m) === 1;
+            if (!$isCacheFile && strpos($entry, 'timthumb_tmpimg_') !== 0) { // temporary files left by a crashed request
+                continue;
+            }
+            $file = $this->cacheDirectory . '/' . $entry;
+            if (@filemtime($file) >= $timeAgo) {
+                continue;
+            }
+            $this->debug(3, "Deleting cache file $file older than max age");
+            if ($isCacheFile && !empty($m[1])) {
+                $this->deleteUnusedLockFile($file);
+            } else {
+                @unlink($file);
+            }
+        }
+        closedir($dh);
+        return true;
     }
 
-    protected function processImageAndWriteToCache($localImage)
+    /**
+     * Delete a lock file only if nobody holds it, in the same way releaseLock() does,
+     * so that cleaning never lets two requests generate the same image at once.
+     */
+    protected function deleteUnusedLockFile($file)
     {
-        $sData      = @getimagesize($localImage);
+        $fh = @fopen($file, 'r');
+        if (!$fh) {
+            return;
+        }
+        if (flock($fh, LOCK_EX | LOCK_NB)) {
+            // The file may have been replaced since it was opened (released and created again by another
+            // request); only delete it if the path still points to the file that is locked here.
+            $locked = fstat($fh);
+            clearstatcache(true, $file);
+            $current = @stat($file);
+            if ($current && $locked['ino'] === $current['ino'] && $locked['dev'] === $current['dev']) {
+                @unlink($file);
+            }
+            flock($fh, LOCK_UN);
+        }
+        fclose($fh);
+    }
+
+    /**
+     * Resize the image, store it in the cache file and return it.
+     * The caller must hold the lock of the cache file.
+     * @param array|null $sData the result of getimagesize() if the caller already has it
+     * @return array|false ['type' => 'jpg'|'png'|'gif', 'data' => image bytes]
+     */
+    protected function processImageAndWriteToCache($localImage, $sData = null)
+    {
+        $sData      = $sData ?: @getimagesize($localImage);
         if (!$sData) {
             return $this->error("The image being resized is not a valid gif, jpg or png.");
         }
@@ -863,9 +1069,17 @@ Options -Indexes
             return $this->error('The image is too large to process (not enough memory).');
         }
 
+        // Wait for a processing slot, so that only a few images are decoded at the same time.
+        $slot = $this->acquireProcessingSlot();
+        if ($slot === false) {
+            $this->isBusy = true;
+            return $this->error('The server is busy processing other images. Please try again.');
+        }
+
         // open the existing image
         $image = $this->openImage($mimeType, $localImage);
         if ($image === false) {
+            $this->releaseLock($slot);
             return $this->error('Unable to open image.');
         }
 
@@ -1059,58 +1273,77 @@ Options -Indexes
             imagetruecolortopalette($canvas, false, imagecolorstotal($image));
         }
 
-        $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
+        // Encode into memory: the result is written to the cache once and served from memory.
+        ob_start();
         if (preg_match('@^image/(?:jpg|jpeg)$@i', $mimeType)) {
             $imgType = 'jpg';
-            imagejpeg($canvas, $tempFilePath, $quality);
+            imagejpeg($canvas, null, $quality);
         } elseif (preg_match('@^image/png$@i', $mimeType)) {
             $imgType = 'png';
-            imagepng($canvas, $tempFilePath, (int) floor($quality * 0.09));
-            if (config('png.optipngEnabled')) {
-                $this->handleOptiPng($tempFilePath);
-            } elseif (config('png.pngcrushEnabled')) {
-                $this->handlePngCrush($tempFilePath);
-            }
+            imagepng($canvas, null, (int) floor($quality * 0.09));
         } elseif (preg_match('@^image/gif$@i', $mimeType)) {
             $imgType = 'gif';
-            imagegif($canvas, $tempFilePath);
+            imagegif($canvas);
         } else {
+            ob_end_clean();
+            $this->releaseLock($slot);
             return $this->sanityFail("Could not match mime type after verifying it previously.");
         }
+        $data = ob_get_clean();
+        // Free the decoded images and the slot before the (slower) file operations.
+        $image = $canvas = null;
+        $this->releaseLock($slot);
+        if ($data === false || $data === '') {
+            return $this->error('Could not encode the image.');
+        }
 
-        $this->debug(3, "Rewriting image with security header.");
-        $secureTempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
-        file_put_contents(
-            $secureTempFilePath,
-            $this->filePrependSecurityBlock . $imgType . ' ?' . '>'
-        ); //6 extra bytes, first 3 being image type
-        file_put_contents(
-            $secureTempFilePath,
-            file_get_contents($tempFilePath, false, stream_context_create()),
-            FILE_APPEND
-        );
+        if ($imgType === 'png' && (config('png.optipngEnabled') || config('png.pngcrushEnabled'))) {
+            $data = $this->optimizePng($data);
+        }
+
+        $this->debug(3, "Writing the cache file.");
+        $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
+        // The file starts with a PHP guard followed by the 3 letter image type and the PHP closing tag (6 bytes),
+        // so it can not be executed or served directly.
+        $header = $this->filePrependSecurityBlock . $imgType . ' ?' . '>';
+        // An array is written piece by piece, so the image data is not copied once more in memory.
+        if (!$tempFilePath || file_put_contents($tempFilePath, [$header, $data]) === false) {
+            if ($tempFilePath) {
+                @unlink($tempFilePath);
+            }
+            return $this->error('Could not write the cache file.');
+        }
+        // rename() replaces the old file atomically (also on Windows), so readers always find a complete file.
+        if (!rename($tempFilePath, $this->cachefilePath)) {
+            @unlink($tempFilePath);
+            return $this->error('Could not write the cache file.');
+        }
+        return ['type' => $imgType, 'data' => $data];
+    }
+
+    /**
+     * Run optipng or pngcrush (whichever is enabled) on PNG data.
+     */
+    protected function optimizePng($data)
+    {
+        $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
+        if (!$tempFilePath) {
+            return $data;
+        }
+        if (file_put_contents($tempFilePath, $data) === false) {
+            @unlink($tempFilePath);
+            return $data;
+        }
+        $optipng = config('png.optipngPath');
+        if (config('png.optipngEnabled') && $optipng && is_file($optipng)) {
+            $this->handleOptiPng($tempFilePath);
+        } elseif (config('png.pngcrushEnabled')) {
+            // also used when optipng is enabled but its path is not valid
+            $this->handlePngCrush($tempFilePath);
+        }
+        $optimized = file_get_contents($tempFilePath);
         @unlink($tempFilePath);
-        $this->debug(3, "Locking and replacing cache file.");
-        $lockFile = $this->cachefilePath . '.lock';
-        $fh = fopen($lockFile, 'w');
-        if (!$fh) {
-            @unlink($secureTempFilePath);
-            return $this->error("Could not open the lockfile for writing an image.");
-        }
-        if (!flock($fh, LOCK_EX)) {
-            fclose($fh);
-            @unlink($lockFile);
-            @unlink($secureTempFilePath);
-            return $this->error("Could not get a lock for writing.");
-        }
-        @unlink($this->cachefilePath); //rename generally overwrites, but doing this in case of platform specific quirks. File might not exist yet.
-        rename($secureTempFilePath, $this->cachefilePath);
-        flock($fh, LOCK_UN);
-        fclose($fh);
-
-        @unlink($lockFile);
-        $this->debug(3, "Done image replace with security header. Cleaning up and running cleanCache()");
-        return true;
+        return $optimized ?: $data;
     }
 
     protected function handleOptiPng($tempFilePath) {
@@ -1286,13 +1519,16 @@ Options -Indexes
         $this->toDeletes[] = $tempFilePath;
     }
 
-    protected function serveExternalImage()
+    /**
+     * @return array|false ['type' => 'jpg'|'png'|'gif', 'data' => image bytes]
+     */
+    protected function generateExternalImage()
     {
         if (!preg_match('@^https?://[a-zA-Z0-9\-.]+@i', $this->src)) {
             $this->error("Invalid URL supplied.");
             return false;
         }
-        $tempFilePath = tempnam($this->cacheDirectory, 'timthumb');
+        $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
         $this->debug(3, "Fetching external image into temporary file $tempFilePath");
         $this->toDelete($tempFilePath);
         #fetch file here
@@ -1304,7 +1540,8 @@ Options -Indexes
             return false;
         }
 
-        $mimeType = $this->getMimeType($tempFilePath);
+        $sData    = @getimagesize($tempFilePath);
+        $mimeType = $sData['mime'] ?? '';
         if (!preg_match("@^image/(?:jpg|jpeg|gif|png)$@i", $mimeType)) {
             $this->debug(3, "Remote file has invalid mime type: $mimeType");
             @unlink($this->cachefilePath);
@@ -1313,12 +1550,7 @@ Options -Indexes
             return false;
         }
 
-        if (!$this->processImageAndWriteToCache($tempFilePath)) {
-            return false;
-        }
-
-        $this->debug(3, "Image processed succesfully. Serving from cache");
-        return $this->serveCacheFile();
+        return $this->processImageAndWriteToCache($tempFilePath, $sData);
     }
 
     public function curlWrite($curlHandle, $data, $fileHandle)
@@ -1332,43 +1564,41 @@ Options -Indexes
         return $dataSize;
     }
 
+    /**
+     * Send the cache file. Returns false (without sending anything) if it is missing or broken.
+     */
     protected function serveCacheFile()
     {
         $this->debug(3, "Serving {$this->cachefilePath}");
-        if (!is_file($this->cachefilePath)) {
-            $this->error("serveCacheFile called in timthumb but we couldn't find the cached file.");
-            return false;
-        }
-
-        $fp = fopen($this->cachefilePath, 'rb');
+        $fp = @fopen($this->cachefilePath, 'rb');
         if (!$fp) {
-            $this->error("Could not open cachefile.");
+            $this->debug(1, "Could not open cachefile {$this->cachefilePath}");
             return false;
         }
+        $stat = fstat($fp);
 
         $securityBlockSize = strlen($this->filePrependSecurityBlock);
+        $headerSize        = $securityBlockSize + 6;
         fseek($fp, $securityBlockSize, SEEK_SET);
-
-        $this->sendImageHeaders(
-            fread($fp, 3),
-            filesize($this->cachefilePath) - ($securityBlockSize + 6)
-        );
-
-        fseek($fp, 3, SEEK_CUR);
-        while (!feof($fp)) {
-            $bytesSent = @fread($fp, 8192);
-            if ($bytesSent === false) {
-                $this->error("Error reading from cachefile.");
-                break;
-            }
-            echo $bytesSent;
+        $imgType = fread($fp, 3);
+        if ($stat['size'] <= $headerSize || !in_array($imgType, ['jpg', 'png', 'gif'], true)) {
+            fclose($fp);
+            return false;
         }
-
+        fseek($fp, $headerSize, SEEK_SET);
+        $this->sendImageHeaders($imgType, $stat['size'] - $headerSize, $stat['mtime']);
+        fpassthru($fp);
         fclose($fp);
         return true;
     }
 
-    protected function sendImageHeaders($mimeType, $dataSize)
+    protected function cacheFileMTime()
+    {
+        clearstatcache(true, $this->cachefilePath);
+        return @filemtime($this->cachefilePath) ?: now();
+    }
+
+    protected function sendImageHeaders($mimeType, $dataSize, $mtime)
     {
         if (!preg_match('@^image/@i', $mimeType)) {
             $mimeType = 'image/' . $mimeType;
@@ -1381,7 +1611,7 @@ Options -Indexes
         header('Content-Type: ' . $mimeType);
         header('Accept-Ranges: none'); //Changed this because we don't accept range requests
         header('Content-Length: ' . $dataSize);
-        $etag = '"' . filemtime($this->cachefilePath) . '"';
+        $etag = '"' . $mtime . '"';
         header(sprintf('ETag: %s', $etag));
         if (!config('browserCache.enable')) {
             $this->debug(3, "Browser cache is disabled so setting non-caching headers.");
@@ -1431,7 +1661,7 @@ Options -Indexes
 
     protected function debug($level, $msg)
     {
-        if (!$level || config('debug.level') < $level) {
+        if (!$level || $this->debugLevel < $level) {
             return;
         }
 
@@ -1475,6 +1705,9 @@ Options -Indexes
     /**
      * Estimate the memory GD needs for the source image and the canvas.
      * A truecolor GD image uses about 4 bytes per pixel plus row overhead, so ~5 bytes per pixel is used.
+     * The output is encoded into an output buffer and then copied into a string; in the worst case
+     * (e.g. a PNG that does not compress) each is about as large as the raw canvas, so 2 x 4 bytes per
+     * output pixel are added.
      */
     protected function hasEnoughMemoryFor($srcWidth, $srcHeight, $dstWidth, $dstHeight)
     {
@@ -1485,7 +1718,7 @@ Options -Indexes
         // A missing destination dimension is computed later, so assume the configured maximum for it.
         $dstWidth  = $dstWidth ?: (int) config('maxWidth');
         $dstHeight = $dstHeight ?: (int) config('maxHeight');
-        $needed    = ($srcWidth * $srcHeight + $dstWidth * $dstHeight) * 5;
+        $needed    = $srcWidth * $srcHeight * 5 + $dstWidth * $dstHeight * (5 + 2 * 4);
         $available = $this->returnBytes($limit) - memory_get_usage();
         $this->debug(3, sprintf('Estimated memory needed: %d bytes, available: %d bytes', $needed, $available));
         return $needed < $available;
