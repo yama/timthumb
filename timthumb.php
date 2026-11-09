@@ -82,6 +82,11 @@ class timthumb
 
     protected static $mergedConfig = null;
 
+    // Prefix of the temporary files created while fetching / resizing an image
+    const TEMP_FILE_PREFIX = 'timthumb_tmpimg_';
+    // Temporary and lock files older than this (seconds) are left over from a failed request and are removed by cleanCache()
+    const STALE_TEMP_FILE_AGE = 3600;
+
     protected $src             = '';
     protected $is404           = false;
     protected $lastURLError    = false;
@@ -788,27 +793,28 @@ Options -Indexes
             if (!touch($lastCleanFile)) {
                 $this->error("Could not create cache clean timestamp file.");
             }
-            $files = glob($this->cacheDirectory . '/*' . self::config('fileCache.suffix'));
-            if ($files) {
-                $timeAgo = self::now() - self::config('fileCache.maxFileAge');
-                foreach ($files as $file) {
-                    if (@filemtime($file) < $timeAgo) {
-                        $this->debug(
-                            3,
-                            sprintf(
-                                "Deleting cache file $file older than max age: %d seconds",
-                                self::config('fileCache.maxFileAge')
-                            )
-                        );
-                        @unlink($file);
-                    }
-                }
-            }
+            // Only our own files are matched: the cache directory may be the shared system temp directory.
+            $cachePattern = self::config('fileCache.prefix') . '*' . self::config('fileCache.suffix');
+            $this->deleteFilesOlderThan($cachePattern, self::config('fileCache.maxFileAge'));
+            // Temporary files and lock files left behind by a request that died half way.
+            $this->deleteFilesOlderThan(self::TEMP_FILE_PREFIX . '*', self::STALE_TEMP_FILE_AGE);
+            $this->deleteFilesOlderThan($cachePattern . '.lock', self::STALE_TEMP_FILE_AGE);
             return true;
         }
 
         $this->debug(3, "Cache was cleaned less than " . self::config('fileCache.timeBetweenCleans') . " seconds ago so no cleaning needed.");
         return false;
+    }
+
+    protected function deleteFilesOlderThan($pattern, $maxAge)
+    {
+        $timeAgo = self::now() - $maxAge;
+        foreach (glob($this->cacheDirectory . '/' . $pattern) ?: [] as $file) {
+            if (is_file($file) && @filemtime($file) < $timeAgo) {
+                $this->debug(3, sprintf('Deleting %s older than %d seconds', $file, $maxAge));
+                @unlink($file);
+            }
+        }
     }
 
     protected function processImageAndWriteToCache($localImage)
@@ -1057,7 +1063,7 @@ Options -Indexes
             imagetruecolortopalette($canvas, false, imagecolorstotal($image));
         }
 
-        $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
+        $tempFilePath = tempnam($this->cacheDirectory, self::TEMP_FILE_PREFIX);
         if ($imgType === 'jpg') {
             imagejpeg($canvas, $tempFilePath, $quality);
         } elseif ($imgType === 'png') {
@@ -1072,7 +1078,7 @@ Options -Indexes
         }
 
         $this->debug(3, "Rewriting image with security header.");
-        $secureTempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
+        $secureTempFilePath = tempnam($this->cacheDirectory, self::TEMP_FILE_PREFIX);
         file_put_contents(
             $secureTempFilePath,
             $this->filePrependSecurityBlock . $imgType . ' ?' . '>'
@@ -1153,7 +1159,7 @@ Options -Indexes
             return;
         }
 
-        $pngCrushFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
+        $pngCrushFilePath = tempnam($this->cacheDirectory, self::TEMP_FILE_PREFIX);
         $this->debug(3, "pngcrush'ing $tempFilePath to $pngCrushFilePath");
         $out = $this->runCommand([$pngCrushPath, $tempFilePath, $pngCrushFilePath]);
         clearstatcache();
@@ -1276,7 +1282,7 @@ Options -Indexes
 
     protected function serveExternalImage()
     {
-        $tempFilePath = tempnam($this->cacheDirectory, 'timthumb');
+        $tempFilePath = tempnam($this->cacheDirectory, self::TEMP_FILE_PREFIX);
         $this->debug(3, "Fetching external image into temporary file $tempFilePath");
         $this->toDelete($tempFilePath);
         #fetch file here
