@@ -140,11 +140,13 @@ class timthumb
             $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), self::server('REQUEST_URI')));
         }
         $this->cacheDirectory = $this->getCacheDirectory();
+        if (!$this->cacheDirectory) {
+            // Without a cache directory there is nowhere to write the resized image (or temporary files).
+            return;
+        }
 
         // Clean the cache after the response has been sent, so that no visitor has to wait for it.
-        if ($this->cacheDirectory) {
-            register_shutdown_function([$this, 'cleanCache']);
-        }
+        register_shutdown_function([$this, 'cleanCache']);
 
         $this->myHost = preg_replace('@^www\.@i', '', self::server('HTTP_HOST'));
         $this->src    = self::param('src');
@@ -620,6 +622,10 @@ class timthumb
                 $this->error('Could not create the file cache directory.');
                 return false;
             }
+        }
+        if (!is_writable(self::config('fileCache.directory'))) {
+            $this->error('The file cache directory is not writable.');
+            return false;
         }
 
         if (self::config('fileCache.directory') !== sys_get_temp_dir()) {
