@@ -1179,19 +1179,21 @@ Options -Indexes
     }
 
     /**
-     * '#abc' / 'abc' / 'aabbcc' => 'aabbcc'. Anything else falls back to `default.cc`.
+     * '#abc' / 'abc' / 'aabbcc' => 'aabbcc'. Anything else falls back to `default.cc` (and to white if that is invalid too).
      */
     protected function normalizeHexColor($color)
     {
-        $color = ltrim((string) $color, '#');
-        if (!preg_match('/^(?:[0-9a-f]{3}|[0-9a-f]{6})$/i', $color)) {
+        foreach ([$color, self::config('default.cc'), 'ffffff'] as $candidate) {
+            $candidate = ltrim((string) $candidate, '#');
             // e.g. 'xyz' used to become black, because hexdec() ignores the invalid characters
-            return ltrim((string) self::config('default.cc'), '#');
+            if (preg_match('/^[0-9a-f]{6}$/i', $candidate)) {
+                return $candidate;
+            }
+            if (preg_match('/^[0-9a-f]{3}$/i', $candidate)) {
+                return $candidate[0] . $candidate[0] . $candidate[1] . $candidate[1] . $candidate[2] . $candidate[2];
+            }
         }
-        if (strlen($color) == 3) {
-            return $color[0] . $color[0] . $color[1] . $color[1] . $color[2] . $color[2];
-        }
-        return $color;
+        return 'ffffff';
     }
 
     /**
