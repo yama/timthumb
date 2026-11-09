@@ -99,6 +99,7 @@ class timthumb
     protected $debugLevel      = 0;
     protected $isBusy          = false;
     protected $waitedSeconds   = 0.0;
+    protected $sourceResolved  = false; // init() and resolveSource() succeeded
     // The cache key contains $version and this number. Increase it to force all cache files to be recreated.
     protected $fileCacheVersion = 1;
     //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
@@ -123,22 +124,24 @@ class timthumb
         return $default;
     }
 
-    public function __construct()
+    /**
+     * Check the environment and read the requested `src`.
+     * @return bool false when an error was recorded
+     */
+    protected function init()
     {
         if (!extension_loaded('gd')) {
-            $this->error('GD extension is not loaded');
-            return;
+            return $this->error('GD extension is not loaded');
         }
 
         $this->debugLevel = (int) self::config('debug.level');
-        date_default_timezone_set('UTC');
         if ($this->debugLevel >= 1) {
             $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), self::server('REQUEST_URI')));
         }
         $this->cacheDirectory = $this->getCacheDirectory();
         if (!$this->cacheDirectory) {
             // Without a cache directory there is nowhere to write the resized image (or temporary files).
-            return;
+            return false;
         }
 
         // Clean the cache after the response has been sent, so that no visitor has to wait for it.
@@ -156,19 +159,23 @@ class timthumb
         }
 
         if (strlen($this->src) <= 3) {
-            $this->error('No image specified');
-            return;
+            return $this->error('No image specified');
         }
-        if (self::config('blockExternalLeechers') && !$this->isAllowedReferer()) {
-            echo $this->dispRedImage();
-            exit;
-        }
+        return true;
+    }
 
+    /**
+     * Decide whether `src` is an external URL or a local file, check that it may be served
+     * and work out the cache file path.
+     * @return bool false when an error was recorded
+     */
+    protected function resolveSource()
+    {
         if (preg_match('@^https?://[^/]+@i', $this->src)) {
             $this->debug(2, 'Is a request for an external URL: ' . $this->src);
             $this->isExternalURL = true;
             if (!$this->isExternalImageAllowed()) {
-                return;
+                return false;
             }
         } else {
             $this->debug(2, 'Is a request for an internal file: ' . $this->src);
@@ -180,15 +187,14 @@ class timthumb
             $this->cachefilePath = $this->generateCacheFilePath(
                 $salt . $this->cacheKeyParams() . $this->fileCacheVersion
             );
-            return;
+            return $this->sourceResolved = true;
         }
 
         $this->localImagePath = $this->getLocalImagePath($this->src);
         if (!$this->localImagePath) {
             $this->debug(1, 'Could not find the local image: ' . $this->src);
-            $this->error('Could not find the internal image you specified.');
             $this->set404();
-            return;
+            return $this->error('Could not find the internal image you specified.');
         }
 
         $this->debug(1, 'Local image path is ' . $this->localImagePath);
@@ -197,6 +203,7 @@ class timthumb
         $this->cachefilePath = $this->generateCacheFilePath(
             $salt . $this->localImageMTime . $this->localImagePath . $this->cacheKeyParams() . $this->fileCacheVersion
         );
+        return $this->sourceResolved = true;
     }
 
     /**
@@ -227,24 +234,56 @@ class timthumb
         }
     }
 
+    /**
+     * Handle the request and send a response: the image, a 304, or an error image.
+     */
     public function start()
     {
-        $this->handleErrors();
-        if ($this->tryBrowserCache()) {
-            exit;
+        if (!$this->handleRequest()) {
+            $this->handleErrors();
         }
-        $this->handleErrors();
-        if (self::config('fileCache.enabled') && $this->tryServerCache()) {
-            exit;
-        }
-        $this->handleErrors();
-        $this->run();
-        $this->handleErrors();
-        exit;
     }
 
+    /**
+     * @return bool true when a response has been sent, false when errors were recorded instead
+     */
+    protected function handleRequest()
+    {
+        if (!$this->init()) {
+            return false;
+        }
+        if (self::config('blockExternalLeechers') && !$this->isAllowedReferer()) {
+            echo $this->dispRedImage();
+            return true;
+        }
+        if (!$this->resolveSource()) {
+            return false;
+        }
+        if ($this->tryBrowserCache()) {
+            return true;
+        }
+        if (self::config('fileCache.enabled') && $this->tryServerCache()) {
+            return true;
+        }
+        if ($this->errors) {
+            // tryServerCache() found a recent failure to fetch this external image
+            return false;
+        }
+        return $this->run();
+    }
+
+    /**
+     * Create the resized image (or wait for another request that is creating it) and send it.
+     * Public for compatibility with code that calls `(new timthumb())->run()` directly (the request used to be
+     * read in the constructor); in that case the request is read here first. Errors are recorded, not sent.
+     * @return bool true when the image has been sent
+     */
     public function run()
     {
+        if (!$this->sourceResolved && !($this->init() && $this->resolveSource())) {
+            return false;
+        }
+
         // Only one request generates a given cache file; concurrent requests for the same image wait here
         // and then serve the result, instead of all decoding (or downloading) the same image at once.
         $lockFile = $this->cachefilePath . '.lock';
@@ -653,17 +692,25 @@ Options -Indexes
         return (bool) file_put_contents($htaccessFilePath, $htaccessContent);
     }
 
+    /**
+     * Send the recorded errors: the configured not-found / error image, a generated error image, or as a last resort HTML.
+     */
     protected function handleErrors()
     {
         if (!$this->errors) {
-            return false;
+            return;
+        }
+        if (headers_sent()) {
+            // Part of an image has already been sent; nothing sensible can be added to the response.
+            $this->debug(1, 'Errors after the response was started: ' . implode(' / ', $this->errors));
+            return;
         }
 
         $status = $this->is404() ? 404 : ($this->isBusy ? 503 : 400);
 
         if (self::config('notFoundImage') && $this->is404()) {
             if ($this->serveImg($this->resolveConfiguredImage(self::config('notFoundImage')), $status)) {
-                exit;
+                return;
             }
 
             $this->error(
@@ -673,7 +720,7 @@ Options -Indexes
 
         if (self::config('errorImage')) {
             if ($this->serveImg($this->resolveConfiguredImage(self::config('errorImage')), $status)) {
-                exit;
+                return;
             }
 
             $this->error(
@@ -683,13 +730,13 @@ Options -Indexes
 
         // timthumb is usually embedded with <img>, where an HTML error page is invisible, so draw the errors as an image.
         if ($this->serveErrorImage($status)) {
-            exit;
+            return;
         }
 
         // GD is not available: fall back to a plain HTML error page.
         http_response_code($status);
         if (!self::config('debug.displayErrorMessages')) {
-            exit;
+            return;
         }
         $html = '<ul>';
         foreach ($this->errors as $err) {
@@ -700,8 +747,6 @@ Options -Indexes
         echo 'The following error(s) occured:<br />' . $html . '<br />';
         echo '<br />Query String : ' . htmlentities(self::server('QUERY_STRING'), ENT_QUOTES);
         echo '<br />TimThumb version : ' . $this->version;
-
-        exit;
     }
 
     /**
@@ -823,7 +868,7 @@ Options -Indexes
             $this->debug(3, 'File has not been modified since last get, so serving a 304.');
             http_response_code(304);
             header(sprintf('ETag: %s', $etag));
-            exit;
+            return true;
         }
         header(sprintf('ETag: %s', $etag));
         return false;
@@ -888,9 +933,6 @@ Options -Indexes
     protected function generateInternalImage()
     {
         $this->debug(3, "Local image path is $this->localImagePath");
-        if (!$this->localImagePath) {
-            return $this->sanityFail("localImage not set after verifying it earlier in the code.");
-        }
         $fileSize = filesize($this->localImagePath);
         if ($fileSize > self::config('maxFileSize')) {
             return $this->error("The file you specified is greater than the maximum allowed file size.");
@@ -1677,13 +1719,6 @@ Options -Indexes
         $this->debug(3, "Adding error message: $err");
         $this->errors[] = $err;
         return false;
-    }
-
-    protected function sanityFail($msg)
-    {
-        return $this->error(
-            "There is a problem in the timthumb code. Message: Please report this error at <a href='https://code.google.com/archive/p/timthumb/'>timthumb's bug tracking page</a>: $msg"
-        );
     }
 
     protected function getMimeType($file)
