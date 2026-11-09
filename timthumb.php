@@ -1078,7 +1078,8 @@ Options -Indexes
     }
 
     // Temporary files (timthumb_tmpimg_*) younger than this are not deleted by cleanCache(), as they may be in use.
-    const TEMP_FILE_MAX_AGE = 3600;
+    // Far longer than any request can run (even with a large `curlTimeout`), so no file in use is deleted.
+    const TEMP_FILE_MAX_AGE = 86400;
 
     // zc (zoom/crop) modes
     const ZC_RESIZE        = 0; // Resize to the exact size, ignoring the aspect ratio
