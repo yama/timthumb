@@ -1407,7 +1407,8 @@ Options -Indexes
         // so it can not be executed or served directly.
         $header = $this->filePrependSecurityBlock . $imgType . ' ?' . '>';
         // An array is written piece by piece, so the image data is not copied once more in memory.
-        if (!$tempFilePath || file_put_contents($tempFilePath, [$header, $data]) === false) {
+        // A short write (e.g. the disk is full) must not be published as a cache file.
+        if (!$tempFilePath || file_put_contents($tempFilePath, [$header, $data]) !== strlen($header) + strlen($data)) {
             if ($tempFilePath) {
                 @unlink($tempFilePath);
             }
@@ -1636,6 +1637,10 @@ Options -Indexes
     protected function generateExternalImage()
     {
         $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
+        if (!$tempFilePath) {
+            // A local problem: do not write the failure marker, which would block the image for `waitBetweenFetchErrors`.
+            return $this->error('Could not create a temporary file in the cache directory.');
+        }
         $this->debug(3, "Fetching external image into temporary file $tempFilePath");
         $this->toDelete($tempFilePath);
         #fetch file here
