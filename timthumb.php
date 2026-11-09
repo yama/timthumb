@@ -442,7 +442,8 @@ class timthumb
     }
 
     protected function isExternalImageAllowed() {
-        if (!self::config('allowedSites')) {
+        // `allowExternal` => false (the original TimThumb's ALLOW_EXTERNAL) turns external images off regardless of `allowedSites`.
+        if (!self::config('allowedSites') || !self::config('allowExternal', true)) {
             $this->error('You are not allowed to fetch images from an external website.');
             return false;
         }
