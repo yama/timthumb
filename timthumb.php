@@ -14,7 +14,7 @@
  */
 
 // Do not execute the instance when it is being loaded from an external source
-if (realpath(__FILE__) !== realpath(serverv('SCRIPT_FILENAME'))) {
+if (realpath(__FILE__) !== realpath(timthumb::server('SCRIPT_FILENAME'))) {
     return;
 }
 
@@ -82,6 +82,8 @@ class timthumb
         'errorImage'             => '', // Image to serve if an error occurs instead of the generated error image
     ];
 
+    protected static $mergedConfig = null;
+
     protected $src             = '';
     protected $is404           = false;
     protected $docRoot         = '';
@@ -132,10 +134,10 @@ class timthumb
             return;
         }
 
-        $this->debugLevel = (int) config('debug.level');
+        $this->debugLevel = (int) self::config('debug.level');
         date_default_timezone_set('UTC');
         if ($this->debugLevel >= 1) {
-            $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), serverv('REQUEST_URI')));
+            $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), self::server('REQUEST_URI')));
         }
         $this->cacheDirectory = $this->getCacheDirectory();
 
@@ -144,8 +146,8 @@ class timthumb
             register_shutdown_function([$this, 'cleanCache']);
         }
 
-        $this->myHost = preg_replace('@^www\.@i', '', serverv('HTTP_HOST'));
-        $this->src    = getv('src');
+        $this->myHost = preg_replace('@^www\.@i', '', self::server('HTTP_HOST'));
+        $this->src    = self::param('src');
         if ($this->myHost !== '') {
             // Strip our own host so that full URLs to this site are treated as local files
             $this->src = preg_replace(
@@ -159,7 +161,7 @@ class timthumb
             $this->error('No image specified');
             return;
         }
-        if (config('blockExternalLeechers') && !$this->isAllowedReferer()) {
+        if (self::config('blockExternalLeechers') && !$this->isAllowedReferer()) {
             echo $this->dispRedImage();
             exit;
         }
@@ -208,13 +210,13 @@ class timthumb
     {
         $params = [];
         foreach (['src', 'w', 'h', 'zc', 'q', 'a', 'f', 's', 'cc', 'ct'] as $key) {
-            $params[$key] = getv($key, null);
+            $params[$key] = self::param($key, null);
         }
         $params['config'] = [
-            config('default'),
-            config('png'),
-            config('maxWidth'),
-            config('maxHeight'),
+            self::config('default'),
+            self::config('png'),
+            self::config('maxWidth'),
+            self::config('maxHeight'),
         ];
         return serialize($params);
     }
@@ -234,7 +236,7 @@ class timthumb
             exit;
         }
         $this->handleErrors();
-        if (config('fileCache.enabled') && $this->tryServerCache()) {
+        if (self::config('fileCache.enabled') && $this->tryServerCache()) {
             exit;
         }
         $this->handleErrors();
@@ -245,7 +247,7 @@ class timthumb
 
     public function run()
     {
-        if ($this->isExternalURL && (!config('allowedSites') || !config('allowExternal', true))) {
+        if ($this->isExternalURL && (!self::config('allowedSites') || !self::config('allowExternal', true))) {
             $this->debug(
                 1,
                 'Got a request for an external image but there are no allowed sites specified in the `allowedSites` option, so returning an error message.'
@@ -264,7 +266,7 @@ class timthumb
                 : 'Could not get a lock for writing an image.');
         }
         clearstatcache();
-        if (config('fileCache.enabled') && is_file($this->cachefilePath)) {
+        if (self::config('fileCache.enabled') && is_file($this->cachefilePath)) {
             $this->debug(3, 'The cache file was created while waiting for the lock.');
             if ($this->tryServerCache()) {
                 $this->releaseLock($lock, $lockFile);
@@ -335,7 +337,7 @@ class timthumb
     protected function waitFor(callable $attempt)
     {
         $start = microtime(true);
-        $left  = max(0, (float) config('processingWaitTimeout')) - $this->waitedSeconds;
+        $left  = max(0, (float) self::config('processingWaitTimeout')) - $this->waitedSeconds;
         while (true) {
             $result = $attempt();
             $waited = microtime(true) - $start;
@@ -366,13 +368,13 @@ class timthumb
      */
     protected function acquireProcessingSlot()
     {
-        $max = (int) config('maxConcurrentProcessing');
+        $max = (int) self::config('maxConcurrentProcessing');
         if ($max <= 0) {
             return null;
         }
         $handles  = [];
         for ($i = 0; $i < $max; $i++) {
-            $handles[$i] = @fopen(sprintf('%s/%s_slot_%d.lock', $this->cacheDirectory, config('fileCache.prefix'), $i), 'c');
+            $handles[$i] = @fopen(sprintf('%s/%s_slot_%d.lock', $this->cacheDirectory, self::config('fileCache.prefix'), $i), 'c');
         }
         if (!array_filter($handles)) {
             $this->debug(1, 'Could not create the processing slot files, so processing without a limit.');
@@ -402,17 +404,17 @@ class timthumb
         $cachefilePath = sprintf(
             '%s/%s%s%s%s',
             $this->cacheDirectory,
-            config('fileCache.prefix'),
+            self::config('fileCache.prefix'),
             $this->isExternalURL ? '_ext_' : '_int_',
             md5($seedString),
-            config('fileCache.suffix')
+            self::config('fileCache.suffix')
         );
         $this->debug(2, 'Cache file is: ' . $cachefilePath);
         return $cachefilePath;
     }
 
     protected function isExternalImageAllowed() {
-        if (!config('allowedSites')) {
+        if (!self::config('allowedSites')) {
             $this->error('You are not allowed to fetch images from an external website.');
             return false;
         }
@@ -454,7 +456,7 @@ class timthumb
         $givenPort = isset($parts['port'])
             ? (int) $parts['port']
             : (strtolower($parts['scheme']) === 'https' ? 443 : 80);
-        foreach (config('allowedSites') as $allowedSite) {
+        foreach (self::config('allowedSites') as $allowedSite) {
             $allowedSite = strtolower(trim($allowedSite));
             // An entry may specify a port ('localhost:9000'); otherwise only the standard ports 80/443 are allowed.
             $allowedPorts = [80, 443];
@@ -518,7 +520,7 @@ class timthumb
      */
     protected function resolvePublicIp($url)
     {
-        if (config('allowPrivateIPs')) {
+        if (self::config('allowPrivateIPs')) {
             return null;
         }
         $host = trim((string) parse_url($url, PHP_URL_HOST), '[]');
@@ -608,20 +610,20 @@ class timthumb
     }
 
     protected function getCacheDirectory() {
-        if (!config('fileCache.directory')) {
+        if (!self::config('fileCache.directory')) {
             return sys_get_temp_dir();
         }
 
-        if (!is_dir(config('fileCache.directory'))) {
-            @mkdir(config('fileCache.directory'));
-            if (!is_dir(config('fileCache.directory'))) {
+        if (!is_dir(self::config('fileCache.directory'))) {
+            @mkdir(self::config('fileCache.directory'));
+            if (!is_dir(self::config('fileCache.directory'))) {
                 $this->error('Could not create the file cache directory.');
                 return false;
             }
         }
 
-        if (config('fileCache.directory') !== sys_get_temp_dir()) {
-            $indexFile = config('fileCache.directory') . '/index.html';
+        if (self::config('fileCache.directory') !== sys_get_temp_dir()) {
+            $indexFile = self::config('fileCache.directory') . '/index.html';
             if (!is_file($indexFile) && !touch($indexFile)) {
                 $this->error(
                     'Could not create the index.html file - to fix this create an empty file named index.html file in the cache directory.'
@@ -634,12 +636,12 @@ class timthumb
             }
         }
 
-        return config('fileCache.directory');
+        return self::config('fileCache.directory');
     }
 
     protected function createHtaccessFile()
     {
-        $htaccessFilePath = config('fileCache.directory') . '/.htaccess';
+        $htaccessFilePath = self::config('fileCache.directory') . '/.htaccess';
         if (is_file($htaccessFilePath)) {
             return true;
         }
@@ -666,8 +668,8 @@ Options -Indexes
 
         $status = $this->is404() ? 404 : ($this->isBusy ? 503 : 400);
 
-        if (config('notFoundImage') && $this->is404()) {
-            if ($this->serveImg($this->resolveConfiguredImage(config('notFoundImage')), $status)) {
+        if (self::config('notFoundImage') && $this->is404()) {
+            if ($this->serveImg($this->resolveConfiguredImage(self::config('notFoundImage')), $status)) {
                 exit;
             }
 
@@ -676,8 +678,8 @@ Options -Indexes
             );
         }
 
-        if (config('errorImage')) {
-            if ($this->serveImg($this->resolveConfiguredImage(config('errorImage')), $status)) {
+        if (self::config('errorImage')) {
+            if ($this->serveImg($this->resolveConfiguredImage(self::config('errorImage')), $status)) {
                 exit;
             }
 
@@ -693,7 +695,7 @@ Options -Indexes
 
         // GD is not available: fall back to a plain HTML error page.
         http_response_code($status);
-        if (!config('debug.displayErrorMessages')) {
+        if (!self::config('debug.displayErrorMessages')) {
             exit;
         }
         $html = '<ul>';
@@ -703,7 +705,7 @@ Options -Indexes
         $html .= '</ul>';
         echo '<h1>A TimThumb error has occured</h1>';
         echo 'The following error(s) occured:<br />' . $html . '<br />';
-        echo '<br />Query String : ' . htmlentities(serverv('QUERY_STRING'), ENT_QUOTES);
+        echo '<br />Query String : ' . htmlentities(self::server('QUERY_STRING'), ENT_QUOTES);
         echo '<br />TimThumb version : ' . $this->version;
 
         exit;
@@ -725,11 +727,11 @@ Options -Indexes
         $lineHeight = imagefontheight($font) + 2;
         $padding    = 6;
 
-        $reqWidth  = (int) getv('w', 0);
-        $reqHeight = (int) getv('h', 0);
-        $width     = min($reqWidth > 0 ? max(16, $reqWidth) : 400, max(16, (int) config('maxWidth')));
+        $reqWidth  = (int) self::param('w', 0);
+        $reqHeight = (int) self::param('h', 0);
+        $width     = min($reqWidth > 0 ? max(16, $reqWidth) : 400, max(16, (int) self::config('maxWidth')));
 
-        if (config('debug.displayErrorMessages')) {
+        if (self::config('debug.displayErrorMessages')) {
             $messages = array_merge(['TimThumb error:'], $this->errors);
         } else {
             $messages = ['Image error'];
@@ -747,7 +749,7 @@ Options -Indexes
         $textHeight = count($lines) * $lineHeight + 2 * $padding;
         $height     = min(
             $reqHeight > 0 ? max(16, $reqHeight) : max(100, $textHeight),
-            max(16, (int) config('maxHeight'))
+            max(16, (int) self::config('maxHeight'))
         );
 
         // The error may itself be caused by low memory, so do not risk a fatal error while drawing it.
@@ -806,7 +808,7 @@ Options -Indexes
 
     protected function tryBrowserCache()
     {
-        if (!config('browserCache.enable')) {
+        if (!self::config('browserCache.enable')) {
             $this->debug(3, 'Browser caching is disabled');
             return false;
         }
@@ -823,7 +825,7 @@ Options -Indexes
         if (!$mtime) return false;
 
         $etag = sprintf('"%s"', $mtime);
-        if ($etag === serverv('HTTP_IF_NONE_MATCH')) {
+        if ($etag === self::server('HTTP_IF_NONE_MATCH')) {
             $this->debug(1, 'Returning 304 not modified');
             $this->debug(3, 'File has not been modified since last get, so serving a 304.');
             http_response_code(304);
@@ -850,12 +852,12 @@ Options -Indexes
             if (filesize($this->cachefilePath) < 1) {
                 $this->debug(3, 'Found an empty cachefile indicating a failed earlier request. Checking how old it is.');
                 //Fetching error occured previously
-                if (now() - @filemtime($this->cachefilePath) > config('waitBetweenFetchErrors')) {
+                if (self::now() - @filemtime($this->cachefilePath) > self::config('waitBetweenFetchErrors')) {
                     $this->debug(
                         3,
                         sprintf(
                             'File is older than %d seconds. Deleting and returning false so app can try and load file.',
-                            config('waitBetweenFetchErrors')
+                            self::config('waitBetweenFetchErrors')
                         )
                     );
                     @unlink($this->cachefilePath);
@@ -897,7 +899,7 @@ Options -Indexes
             return $this->sanityFail("localImage not set after verifying it earlier in the code.");
         }
         $fileSize = filesize($this->localImagePath);
-        if ($fileSize > config('maxFileSize')) {
+        if ($fileSize > self::config('maxFileSize')) {
             return $this->error("The file you specified is greater than the maximum allowed file size.");
         }
         if ($fileSize <= 0) {
@@ -913,7 +915,7 @@ Options -Indexes
      */
     public function cleanCache()
     {
-        if (!$this->cacheDirectory || config('fileCache.timeBetweenCleans') < 0) {
+        if (!$this->cacheDirectory || self::config('fileCache.timeBetweenCleans') < 0) {
             return false;
         }
 
@@ -928,8 +930,8 @@ Options -Indexes
             }
             return false;
         }
-        if (@filemtime($lastCleanFile) >= (now() - config('fileCache.timeBetweenCleans'))) {
-            $this->debug(3, "Cache was cleaned less than " . config('fileCache.timeBetweenCleans') . " seconds ago so no cleaning needed.");
+        if (@filemtime($lastCleanFile) >= (self::now() - self::config('fileCache.timeBetweenCleans'))) {
+            $this->debug(3, "Cache was cleaned less than " . self::config('fileCache.timeBetweenCleans') . " seconds ago so no cleaning needed.");
             return false;
         }
 
@@ -937,7 +939,7 @@ Options -Indexes
             1,
             sprintf(
                 "Cache was last cleaned more than %d seconds ago. Cleaning now.",
-                config('fileCache.timeBetweenCleans')
+                self::config('fileCache.timeBetweenCleans')
             )
         );
         // Very slight race condition here, but worst case we'll have 2 or 3 servers cleaning the cache simultaneously once a day.
@@ -967,9 +969,9 @@ Options -Indexes
         // Cache files (and lock files left by a crashed request) are named <prefix>_int_<md5><suffix>[.lock]
         // (or _ext_); matching the whole name also works with an empty suffix and leaves other files alone,
         // including those of another installation that uses a different prefix in a shared directory.
-        $cachePattern = '/^' . preg_quote((string) config('fileCache.prefix'), '/')
-            . '_(?:int|ext)_[0-9a-f]{32}' . preg_quote((string) config('fileCache.suffix'), '/') . '(\.lock)?$/';
-        $timeAgo      = now() - config('fileCache.maxFileAge');
+        $cachePattern = '/^' . preg_quote((string) self::config('fileCache.prefix'), '/')
+            . '_(?:int|ext)_[0-9a-f]{32}' . preg_quote((string) self::config('fileCache.suffix'), '/') . '(\.lock)?$/';
+        $timeAgo      = self::now() - self::config('fileCache.maxFileAge');
         while (($entry = readdir($dh)) !== false) {
             $isCacheFile = preg_match($cachePattern, $entry, $m) === 1;
             if (!$isCacheFile && strpos($entry, 'timthumb_tmpimg_') !== 0) { // temporary files left by a crashed request
@@ -1037,28 +1039,28 @@ Options -Indexes
         }
 
         // get standard input properties
-        $new_width    = abs((int) getv('w', 0));
-        $new_height   = abs((int) getv('h', 0));
-        $zoom_crop    = (int) getv('zc', config('default.zc'));
-        $quality      = max(0, min(100, abs((int) getv('q', config('default.q')))));
-        $align        = getv('a', 'c');
-        $filters      = getv('f', config('default.f'));
-        $sharpen      = (bool) getv('s', config('default.s'));
+        $new_width    = abs((int) self::param('w', 0));
+        $new_height   = abs((int) self::param('h', 0));
+        $zoom_crop    = (int) self::param('zc', self::config('default.zc'));
+        $quality      = max(0, min(100, abs((int) self::param('q', self::config('default.q')))));
+        $align        = self::param('a', 'c');
+        $filters      = self::param('f', self::config('default.f'));
+        $sharpen      = (bool) self::param('s', self::config('default.s'));
         $canvas_color = ltrim(
-            getv('cc', config('default.cc')),
+            self::param('cc', self::config('default.cc')),
             '#'
         );
-        $canvas_trans = (bool) getv('ct', '1');
+        $canvas_trans = (bool) self::param('ct', '1');
 
         // set default width and height if neither are set already
         if ($new_width == 0 && $new_height == 0) {
-            $new_width = (int) config('default.w');
-            $new_height = (int) config('default.h');
+            $new_width = (int) self::config('default.w');
+            $new_height = (int) self::config('default.h');
         }
 
         // ensure size limits can not be abused
-        $new_width  = (int) min($origWidth, $new_width, config('maxWidth'));
-        $new_height = (int) min($origHeight, $new_height, config('maxHeight'));
+        $new_width  = (int) min($origWidth, $new_width, self::config('maxWidth'));
+        $new_height = (int) min($origHeight, $new_height, self::config('maxHeight'));
 
         // set memory limit to be able to have enough space to resize larger images
         $this->setMemoryLimit();
@@ -1120,13 +1122,13 @@ Options -Indexes
                 str_repeat(substr($canvas_color, 2, 1), 2)
             );
         } elseif (strlen($canvas_color) != 6) {
-            $canvas_color = config('default.cc'); // on error return default canvas color
+            $canvas_color = self::config('default.cc'); // on error return default canvas color
         }
 
         // Create a new transparent color for image
         // If is a png and PNG_IS_TRANSPARENT is false then remove the alpha transparency
         // (and if is set a canvas color show it in the background)
-        $useTransparentCanvas = $mimeType === 'image/png' && !config('png.isTransparent') && $canvas_trans;
+        $useTransparentCanvas = $mimeType === 'image/png' && !self::config('png.isTransparent') && $canvas_trans;
         $color = imagecolorallocatealpha(
             $canvas,
             hexdec(substr($canvas_color, 0, 2)),
@@ -1297,7 +1299,7 @@ Options -Indexes
             return $this->error('Could not encode the image.');
         }
 
-        if ($imgType === 'png' && (config('png.optipngEnabled') || config('png.pngcrushEnabled'))) {
+        if ($imgType === 'png' && (self::config('png.optipngEnabled') || self::config('png.pngcrushEnabled'))) {
             $data = $this->optimizePng($data);
         }
 
@@ -1334,10 +1336,10 @@ Options -Indexes
             @unlink($tempFilePath);
             return $data;
         }
-        $optipng = config('png.optipngPath');
-        if (config('png.optipngEnabled') && $optipng && is_file($optipng)) {
+        $optipng = self::config('png.optipngPath');
+        if (self::config('png.optipngEnabled') && $optipng && is_file($optipng)) {
             $this->handleOptiPng($tempFilePath);
-        } elseif (config('png.pngcrushEnabled')) {
+        } elseif (self::config('png.pngcrushEnabled')) {
             // also used when optipng is enabled but its path is not valid
             $this->handlePngCrush($tempFilePath);
         }
@@ -1348,14 +1350,14 @@ Options -Indexes
 
     protected function handleOptiPng($tempFilePath) {
 
-        if (!config('png.optipngPath') || !is_file(config('png.optipngPath'))) {
+        if (!self::config('png.optipngPath') || !is_file(self::config('png.optipngPath'))) {
             $this->debug(3, "optipng is not enabled or optipngPath is not set.");
             return;
         }
 
         $this->debug(3, "optipng'ing $tempFilePath");
         $orgSize = filesize($tempFilePath);
-        $this->runCommand([config('png.optipngPath'), '-o1', $tempFilePath]); //you can use up to -o7 but it really slows things down
+        $this->runCommand([self::config('png.optipngPath'), '-o1', $tempFilePath]); //you can use up to -o7 but it really slows things down
         clearstatcache();
         $afterSize = filesize($tempFilePath);
         $sizeDrop = $orgSize - $afterSize;
@@ -1387,7 +1389,7 @@ Options -Indexes
     }
 
     protected function handlePngCrush($tempFilePath) {
-        $pngCrushPath = config('png.pngcrushPath');
+        $pngCrushPath = self::config('png.pngcrushPath');
         if (!$pngCrushPath || !is_file($pngCrushPath)) {
             $this->debug(3, "pngcrush is not enabled or pngcrushPath is not set.");
             return;
@@ -1416,31 +1418,31 @@ Options -Indexes
 
     protected function calcDocRoot()
     {
-        $docRoot = defined('LOCAL_FILE_BASE_DIRECTORY') ? constant('LOCAL_FILE_BASE_DIRECTORY') : serverv('DOCUMENT_ROOT');
+        $docRoot = defined('LOCAL_FILE_BASE_DIRECTORY') ? constant('LOCAL_FILE_BASE_DIRECTORY') : self::server('DOCUMENT_ROOT');
 
         if (!$docRoot) {
             $this->debug(3, "DOCUMENT_ROOT is not set. This is probably windows. Starting search 1.");
-            if (serverv('SCRIPT_FILENAME')) {
-                $docRoot = str_replace('\\', '/', substr(serverv('SCRIPT_FILENAME'), 0, 0 - strlen(serverv('PHP_SELF'))));
+            if (self::server('SCRIPT_FILENAME')) {
+                $docRoot = str_replace('\\', '/', substr(self::server('SCRIPT_FILENAME'), 0, 0 - strlen(self::server('PHP_SELF'))));
                 $this->debug(3, "Generated docRoot using SCRIPT_FILENAME and PHP_SELF as: $docRoot");
             }
         }
         if (!$docRoot) {
             $this->debug(3, "DOCUMENT_ROOT still is not set. Starting search 2.");
-            if (serverv('PATH_TRANSLATED')) {
+            if (self::server('PATH_TRANSLATED')) {
                 $docRoot = str_replace(
                     '\\',
                     '/',
                     substr(
-                        str_replace('\\\\', '\\', serverv('PATH_TRANSLATED')),
+                        str_replace('\\\\', '\\', self::server('PATH_TRANSLATED')),
                         0,
-                        0 - strlen(serverv('PHP_SELF'))
+                        0 - strlen(self::server('PHP_SELF'))
                     )
                 );
                 $this->debug(3, "Generated docRoot using PATH_TRANSLATED and PHP_SELF as: $docRoot");
             }
         }
-        if ($docRoot && serverv('DOCUMENT_ROOT') !== '/') {
+        if ($docRoot && self::server('DOCUMENT_ROOT') !== '/') {
             $docRoot = rtrim($docRoot, '/');
         }
         $this->debug(3, "Doc root is: " . $docRoot);
@@ -1473,7 +1475,7 @@ Options -Indexes
 
         //Candidate locations: under docRoot, as an absolute path, then relative to each directory between docRoot and this script.
         $candidates = [$docRoot . '/' . $src, '/' . $src];
-        $scriptDir = str_replace('\\', '/', dirname(serverv('SCRIPT_FILENAME')));
+        $scriptDir = str_replace('\\', '/', dirname(self::server('SCRIPT_FILENAME')));
         // Normalize both sides to "/" so the prefix check also works with Windows paths (C:\inetpub\wwwroot)
         $base = rtrim(str_replace('\\', '/', $docRoot), '/');
         $relative = (stripos($scriptDir, $base) === 0) ? substr($scriptDir, strlen($base)) : '';
@@ -1556,7 +1558,7 @@ Options -Indexes
     public function curlWrite($curlHandle, $data, $fileHandle)
     {
         $dataSize = strlen($data);
-        if ($dataSize + ftell($fileHandle) > config('maxFileSize')) {
+        if ($dataSize + ftell($fileHandle) > self::config('maxFileSize')) {
             $this->lastURLError = 'The remote file is greater than the maximum allowed file size.';
             return 0; // abort the transfer
         }
@@ -1595,7 +1597,7 @@ Options -Indexes
     protected function cacheFileMTime()
     {
         clearstatcache(true, $this->cachefilePath);
-        return @filemtime($this->cachefilePath) ?: now();
+        return @filemtime($this->cachefilePath) ?: self::now();
     }
 
     protected function sendImageHeaders($mimeType, $dataSize, $mtime)
@@ -1606,21 +1608,21 @@ Options -Indexes
         if (strtolower($mimeType) === 'image/jpg') {
             $mimeType = 'image/jpeg';
         }
-        $gmdate_expires = gmdate('D, d M Y H:i:s', now() + (int) config('browserCache.maxAge')) . ' GMT';
+        $gmdate_expires = gmdate('D, d M Y H:i:s', self::now() + (int) self::config('browserCache.maxAge')) . ' GMT';
         // send content headers then display image
         header('Content-Type: ' . $mimeType);
         header('Accept-Ranges: none'); //Changed this because we don't accept range requests
         header('Content-Length: ' . $dataSize);
         $etag = '"' . $mtime . '"';
         header(sprintf('ETag: %s', $etag));
-        if (!config('browserCache.enable')) {
+        if (!self::config('browserCache.enable')) {
             $this->debug(3, "Browser cache is disabled so setting non-caching headers.");
             header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
             header("Pragma: no-cache");
-            header('Expires: ' . gmdate('D, d M Y H:i:s', now()) . ' GMT');
+            header('Expires: ' . gmdate('D, d M Y H:i:s', self::now()) . ' GMT');
         } else {
             $this->debug(3, "Browser caching is enabled");
-            header('Cache-Control: max-age=' . config('browserCache.maxAge') . ', must-revalidate');
+            header('Cache-Control: max-age=' . self::config('browserCache.maxAge') . ', must-revalidate');
             header('Expires: ' . $gmdate_expires);
         }
         return true;
@@ -1649,8 +1651,8 @@ Options -Indexes
 
     protected function getClientIP()
     {
-        $forwardedFor = trim(explode(',', serverv('HTTP_X_FORWARDED_FOR', ''))[0]);
-        $ip = $forwardedFor ?: serverv('HTTP_CLIENT_IP') ?: serverv('REMOTE_ADDR');
+        $forwardedFor = trim(explode(',', self::server('HTTP_X_FORWARDED_FOR', ''))[0]);
+        $ip = $forwardedFor ?: self::server('HTTP_CLIENT_IP') ?: self::server('REMOTE_ADDR');
 
         if (!$ip || !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
             return 'illegal';
@@ -1671,7 +1673,7 @@ Options -Indexes
             sprintf(
                 "TimThumb Debug line %d [%.6f : %.6f]: %s",
                 $caller['line'] ?? 0,
-                ($now - (float) serverv('REQUEST_TIME_FLOAT', $now)),
+                ($now - (float) self::server('REQUEST_TIME_FLOAT', $now)),
                 ($this->lastBenchTime ? $now - $this->lastBenchTime : 0),
                 $msg
             )
@@ -1716,8 +1718,8 @@ Options -Indexes
             return true; // unlimited
         }
         // A missing destination dimension is computed later, so assume the configured maximum for it.
-        $dstWidth  = $dstWidth ?: (int) config('maxWidth');
-        $dstHeight = $dstHeight ?: (int) config('maxHeight');
+        $dstWidth  = $dstWidth ?: (int) self::config('maxWidth');
+        $dstHeight = $dstHeight ?: (int) self::config('maxHeight');
         $needed    = $srcWidth * $srcHeight * 5 + $dstWidth * $dstHeight * (5 + 2 * 4);
         $available = $this->returnBytes($limit) - memory_get_usage();
         $this->debug(3, sprintf('Estimated memory needed: %d bytes, available: %d bytes', $needed, $available));
@@ -1728,13 +1730,13 @@ Options -Indexes
     {
         $inimem   = ini_get('memory_limit');
         $inibytes = $this->returnBytes($inimem);
-        $ourbytes = $this->returnBytes(config('memoryLimit'));
+        $ourbytes = $this->returnBytes(self::config('memoryLimit'));
 
         if ($inibytes < $ourbytes) {
-            ini_set('memory_limit', config('memoryLimit'));
+            ini_set('memory_limit', self::config('memoryLimit'));
             $this->debug(
                 3,
-                sprintf("Increased memory from %s to %s", $inimem, config('memoryLimit'))
+                sprintf("Increased memory from %s to %s", $inimem, self::config('memoryLimit'))
             );
             return;
         }
@@ -1744,7 +1746,7 @@ Options -Indexes
             sprintf(
                 "Not adjusting memory size because the current setting is %s and our size of %s is smaller.",
                 $inimem,
-                config('memoryLimit')
+                self::config('memoryLimit')
             )
         );
     }
@@ -1818,7 +1820,7 @@ Options -Indexes
 
         $curlHandle = curl_init($url);
         $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36";
-        curl_setopt($curlHandle, CURLOPT_TIMEOUT, config('curlTimeout'));
+        curl_setopt($curlHandle, CURLOPT_TIMEOUT, self::config('curlTimeout'));
         curl_setopt($curlHandle, CURLOPT_USERAGENT, $ua);
         curl_setopt($curlHandle, CURLOPT_HEADER, false);
         curl_setopt($curlHandle, CURLOPT_FOLLOWLOCATION, false);
@@ -1901,12 +1903,12 @@ Options -Indexes
 
     protected function isAllowedReferer()
     {
-        if (!serverv('HTTP_REFERER')) {
+        if (!self::server('HTTP_REFERER')) {
             return false;
         }
 
         $myhost = '@^https?://(?:www\.)?' . preg_quote($this->myHost, '@') . '(?:$|/)@i';
-        if (!preg_match($myhost, serverv('HTTP_REFERER'))) {
+        if (!preg_match($myhost, self::server('HTTP_REFERER'))) {
             return false;
         }
 
@@ -1922,50 +1924,53 @@ Options -Indexes
         header('Content-Length: ' . strlen($imgData));
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
         header('Pragma: no-cache');
-        header('Expires: ' . gmdate('D, d M Y H:i:s', serverv('REQUEST_TIME')));
+        header('Expires: ' . gmdate('D, d M Y H:i:s', self::server('REQUEST_TIME')));
         return $imgData;
     }
-}
 
-function config($key, $default = null) {
-    static $config = null;
-    if ($config === null) {
-        $config = timthumb::mergedConfig();
+    /**
+     * Read a config value using dot notation, e.g. self::config('fileCache.directory').
+     */
+    protected static function config($key, $default = null)
+    {
+        if (static::$mergedConfig === null) {
+            static::$mergedConfig = static::mergedConfig();
+        }
+        $value = static::$mergedConfig;
+        foreach (explode('.', $key) as $subkey) {
+            if (!isset($value[$subkey])) {
+                return $default;
+            }
+            $value = $value[$subkey];
+        }
+        return $value;
     }
-    $keys = explode('.', $key);
-    $value = $config;
-    foreach ($keys as $subkey) {
-        if (!isset($value[$subkey])) {
+
+    /**
+     * Read a query parameter. Array input such as ?w[]=1 is ignored to avoid TypeErrors in string/number functions.
+     */
+    protected static function param($key, $default = '')
+    {
+        if (!isset($_GET[$key]) || !is_string($_GET[$key])) {
             return $default;
         }
-        $value = $value[$subkey];
+        return $_GET[$key];
     }
-    return $value;
-}
 
-function getv($key, $default = '')
-{
-    // Ignore array input such as ?w[]=1 to avoid TypeErrors in string/number functions.
-    if (!isset($_GET[$key]) || !is_string($_GET[$key])) {
-        return $default;
+    public static function server($key, $default = '')
+    {
+        return $_SERVER[strtoupper($key)] ?? $default;
     }
-    return $_GET[$key];
-}
 
-function serverv($key, $default = '')
-{
-    if (!isset($_SERVER[strtoupper($key)])) {
-        return $default;
-    }
-    return $_SERVER[strtoupper($key)];
-}
-
-function now()
-{
-    static $now = null;
-    if ($now) {
+    /**
+     * The request time, fixed for the whole request.
+     */
+    protected static function now()
+    {
+        static $now = null;
+        if ($now === null) {
+            $now = time();
+        }
         return $now;
     }
-    $now = time();
-    return $now;
 }
