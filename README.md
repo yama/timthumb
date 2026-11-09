@@ -197,12 +197,18 @@ The query string parameters are used to specify processing for each image, but t
 - `curlTimeout`
     - Default: 20
     - Comment: Timeout in seconds for fetching external images. External images require the PHP curl extension.
+- `curlUserAgent`
+    - Default: a desktop Chrome User-Agent string
+    - Comment: User-Agent sent when fetching external images. A browser-like value is used because some image hosts reject unknown clients.
 - `allowedSites`
     - Default: []
     - Comment: Allowed external websites. Hosts must match exactly; prefix an entry with a dot to also allow its subdomains (e.g. '.example.com' allows example.com and img.example.com). Only http/https on the default ports (80/443) are fetched unless the entry names a port (e.g. 'localhost:9000' for a development image server; such a host usually also needs `allowPrivateIPs`), and redirects are only followed to allowed sites. Avoid allowing domains where anyone can publish content (e.g. '.github.io', '.s3.amazonaws.com'). Example: ['img.youtube.com', '.example.com']
 - `allowPrivateIPs`
     - Default: false
     - Comment: Allow fetching from hosts that resolve to private, loopback or reserved IP addresses (e.g. an intranet image server). Keep this false unless you need it: it protects the server's internal network (SSRF).
+- `allowExternal`
+    - Default: not set (same as true)
+    - Comment: Set to false to turn external images off entirely, even if `allowedSites` is set (also refuses already cached external images). Corresponds to `ALLOW_EXTERNAL` of the original TimThumb.
 - `browserCache`
     - `maxAge`
         - Default: 60\*60\*24\*10
@@ -278,7 +284,7 @@ The query string parameters are used to specify processing for each image, but t
     - Comment: Time to wait between errors fetching remote file
 - `blockExternalLeechers`
     - Default: false
-    - Comment: If the image is being loaded on an external site, display a red "No Hotlinking" gif.
+    - Comment: If the image is being loaded on an external site, display a red "No Hotlinking" gif (with status 403).
 - `notFoundImage`
     - Default: ''
     - Comment: Image to serve if any 404 occurs
