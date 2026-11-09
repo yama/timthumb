@@ -246,7 +246,7 @@ class timthumb
             return false;
         }
         if (self::config('blockExternalLeechers') && !$this->isAllowedReferer()) {
-            echo $this->dispRedImage();
+            $this->serveHotlinkImage();
             return true;
         }
         if (!$this->resolveSource()) {
@@ -1766,17 +1766,19 @@ Options -Indexes
         return true;
     }
 
-    // base64 encoded red image that says 'no hotlinkers'
-    // nothing to worry about! :)
-    protected function dispRedImage()
+    /**
+     * Send the red "No Hotlinking" GIF (`blockExternalLeechers`) with 403 Forbidden.
+     */
+    protected function serveHotlinkImage()
     {
+        // base64 encoded red image that says 'no hotlinkers'
         $imgData = base64_decode("R0lGODlhUAAMAIAAAP8AAP///yH5BAAHAP8ALAAAAABQAAwAAAJpjI+py+0Po5y0OgAMjjv01YUZ\nOGplhWXfNa6JCLnWkXplrcBmW+spbwvaVr/cDyg7IoFC2KbYVC2NQ5MQ4ZNao9Ynzjl9ScNYpneb\nDULB3RP6JuPuaGfuuV4fumf8PuvqFyhYtjdoeFgAADs=");
+        http_response_code(403);
         header('Content-Type: image/gif');
         header('Content-Length: ' . strlen($imgData));
         header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
         header('Pragma: no-cache');
-        header('Expires: ' . gmdate('D, d M Y H:i:s', self::server('REQUEST_TIME')));
-        return $imgData;
+        echo $imgData;
     }
 
     /**

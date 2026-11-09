@@ -272,7 +272,7 @@ The query string parameters are used to specify processing for each image, but t
     - Comment: Time to wait between errors fetching remote file
 - `blockExternalLeechers`
     - Default: false
-    - Comment: If the image is being loaded on an external site, display a red "No Hotlinking" gif.
+    - Comment: If the image is being loaded on an external site, display a red "No Hotlinking" gif (with status 403).
 - `notFoundImage`
     - Default: ''
     - Comment: Image to serve if any 404 occurs
