@@ -1170,12 +1170,13 @@ Options -Indexes
      */
     protected function normalizeHexColor($color)
     {
-        $color = ltrim($color, '#');
+        $color = ltrim((string) $color, '#');
+        if (!preg_match('/^(?:[0-9a-f]{3}|[0-9a-f]{6})$/i', $color)) {
+            // e.g. 'xyz' used to become black, because hexdec() ignores the invalid characters
+            return ltrim((string) self::config('default.cc'), '#');
+        }
         if (strlen($color) == 3) {
             return $color[0] . $color[0] . $color[1] . $color[1] . $color[2] . $color[2];
-        }
-        if (strlen($color) != 6) {
-            return self::config('default.cc');
         }
         return $color;
     }
