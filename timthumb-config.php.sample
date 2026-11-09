@@ -17,7 +17,7 @@ return [
     // 'maxHeight'    => 768,
     // 'allowedSites' => ['img.youtube.com', '.example.com'], // exact host, or '.domain' to include subdomains
     // 'fileCache' => [
-    //     'maxFileAge' => 60*60*24*7,
+    //     'timeBetweenCleans' => 60*60*24*7, // all cache files are deleted this often
     //     'directory'  => __DIR__ . '/cache',
     // ],
     // Image to serve if any 404 occurs
