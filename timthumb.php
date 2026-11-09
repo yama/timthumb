@@ -132,6 +132,10 @@ class timthumb
         date_default_timezone_set('UTC');
         $this->debug(1, sprintf('Starting new request from %s to %s', $this->getClientIP(), self::server('REQUEST_URI')));
         $this->cacheDirectory = $this->getCacheDirectory();
+        if (!$this->cacheDirectory) {
+            // Without a cache directory there is nowhere to write the resized image (or temporary files).
+            return;
+        }
 
         //Clean the cache before we do anything because we don't want the first visitor after self::config('fileCache.timeBetweenCleans') expires to get a stale image.
         $this->cleanCache();
@@ -470,6 +474,10 @@ class timthumb
                 $this->error('Could not create the file cache directory.');
                 return false;
             }
+        }
+        if (!is_writable(self::config('fileCache.directory'))) {
+            $this->error('The file cache directory is not writable.');
+            return false;
         }
 
         if (self::config('fileCache.directory') !== sys_get_temp_dir()) {
