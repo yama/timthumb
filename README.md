@@ -206,6 +206,9 @@ The query string parameters are used to specify processing for each image, but t
 - `allowPrivateIPs`
     - Default: false
     - Comment: Allow fetching from hosts that resolve to private, loopback or reserved IP addresses (e.g. an intranet image server). Keep this false unless you need it: it protects the server's internal network (SSRF).
+- `allowExternal`
+    - Default: not set (same as true)
+    - Comment: Set to false to turn external images off entirely, even if `allowedSites` is set (also refuses already cached external images). Corresponds to `ALLOW_EXTERNAL` of the original TimThumb.
 - `browserCache`
     - `maxAge`
         - Default: 60\*60\*24\*10
