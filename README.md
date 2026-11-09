@@ -221,11 +221,8 @@ The query string parameters are used to specify processing for each image, but t
         - Default: true
         - Comment: Should we store resized/modified images on disk to speed things up?
     - `timeBetweenCleans`
-        - Default: 60\*60\*24
-        - Comment: How often the cache is cleaned
-    - `maxFileAge`
         - Default: 60\*60\*24\*7
-        - Comment: How old does a file have to be to be deleted from the cache
+        - Comment: How often the cache is cleaned. Each clean deletes all cache files of this installation (those named with its `prefix`), whatever their age, and they are created again on the next request; -1 never cleans. The old `maxFileAge` option is no longer used.
     - `suffix`
         - Default: '.cache'
         - Comment: What to put at the end of all files in the cache directory so we can identify them
@@ -296,7 +293,7 @@ The query string parameters are used to specify processing for each image, but t
 
 TimThumb is often used for pages with dozens of thumbnails, so each request should stay light.
 
-- **Cached thumbnails** are served with a few file system checks and one file read; repeat visits get `304 Not Modified` or use the browser cache (`browserCache.maxAge`). Old cache files are deleted at most once per `fileCache.timeBetweenCleans`, after the response has been sent.
+- **Cached thumbnails** are served with a few file system checks and one file read; repeat visits get `304 Not Modified` or use the browser cache (`browserCache.maxAge`). All cache files are deleted at most once per `fileCache.timeBetweenCleans`, after the response has been sent.
 - **New thumbnails** are the expensive part. Only one request generates a given thumbnail (concurrent requests for the same image wait for it), and at most `maxConcurrentProcessing` images are resized at the same time.
 - **The cache key** contains the TimThumb version, the image parameters and the settings that change the output (`default`, `png`, `maxWidth`, `maxHeight`). Redeploying the same version keeps the cache; upgrading TimThumb or changing those settings recreates the thumbnails.
 

@@ -50,8 +50,7 @@ class timthumb
         ],
         'fileCache' => [
             'enabled'           => true, // Should we store resized/modified images on disk to speed things up?
-            'timeBetweenCleans' => 60*60*24, // How often the cache is cleaned
-            'maxFileAge'        => 60*60*24*7, // How old does a file have to be to be deleted from the cache
+            'timeBetweenCleans' => 60*60*24*7, // How often all cache files are deleted (-1 never deletes them)
             'suffix'            => '.cache', // What to put at the end of all files in the cache directory so we can identify them
             'prefix'            => 'timthumb', // What to put at the beg of all files in the cache directory so we can identify them
             'directory'         => __DIR__ . '/cache', // Directory where images are cached. Left blank it will use the system temporary directory (which is better for security)
@@ -104,7 +103,7 @@ class timthumb
     protected $waitedSeconds   = 0.0;
     protected $sourceResolved  = false; // init() and resolveSource() succeeded
     // The cache key contains $version and this number. Increase it to force all cache files to be recreated.
-    protected $fileCacheVersion = 1;
+    protected $fileCacheVersion = 2;
     //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
     protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //";
 
@@ -967,7 +966,8 @@ Options -Indexes
     }
 
     /**
-     * Delete cache files older than `fileCache.maxFileAge`, at most once per `fileCache.timeBetweenCleans`.
+     * Delete all cache files of this installation (`fileCache.prefix`), at most once per `fileCache.timeBetweenCleans`.
+     * Deleting everything instead of only old files keeps the rule simple, so that no file can be left behind forever.
      * Runs as a shutdown function: when cleaning is due, the response is finished first so that the visitor does not wait.
      */
     public function cleanCache()
@@ -977,7 +977,9 @@ Options -Indexes
         }
 
         $this->debug(3, "cleanCache() called");
-        $lastCleanFile = $this->cacheDirectory . '/timthumb_cacheLastCleanTime.touch';
+        // One timestamp per prefix, so that installations sharing a directory do not stop each other's cleaning.
+        // With the default prefix this is the same file name as before.
+        $lastCleanFile = sprintf('%s/%s_cacheLastCleanTime.touch', $this->cacheDirectory, self::config('fileCache.prefix'));
 
         //If this is a new timthumb installation we need to create the file
         if (!is_file($lastCleanFile)) {
@@ -1028,20 +1030,22 @@ Options -Indexes
         // including those of another installation that uses a different prefix in a shared directory.
         $cachePattern = '/^' . preg_quote((string) self::config('fileCache.prefix'), '/')
             . '_(?:int|ext)_[0-9a-f]{32}' . preg_quote((string) self::config('fileCache.suffix'), '/') . '(\.lock)?$/';
-        $timeAgo      = self::now() - self::config('fileCache.maxFileAge');
+        $tempTimeAgo  = self::now() - self::TEMP_FILE_MAX_AGE;
         while (($entry = readdir($dh)) !== false) {
-            $isCacheFile = preg_match($cachePattern, $entry, $m) === 1;
-            if (!$isCacheFile && strpos($entry, 'timthumb_tmpimg_') !== 0) { // temporary files left by a crashed request
-                continue;
-            }
             $file = $this->cacheDirectory . '/' . $entry;
-            if (@filemtime($file) >= $timeAgo) {
-                continue;
-            }
-            $this->debug(3, "Deleting cache file $file older than max age");
-            if ($isCacheFile && !empty($m[1])) {
-                $this->deleteUnusedLockFile($file);
-            } else {
+            if (preg_match($cachePattern, $entry, $m) === 1) {
+                if (!empty($m[1])) {
+                    // a lock file: only if no request is generating that image right now
+                    $this->deleteUnusedLockFile($file);
+                } else {
+                    // Every cache file goes, whatever its age: a request that finds it missing creates it again.
+                    $this->debug(3, "Deleting cache file $file");
+                    @unlink($file);
+                }
+            } elseif (strpos($entry, 'timthumb_tmpimg_') === 0 && @filemtime($file) < $tempTimeAgo) {
+                // A temporary file left by a crashed request. Recent ones may still be in use (by any installation
+                // sharing the directory, since the name has no prefix), so they are left for the next clean.
+                $this->debug(3, "Deleting temporary file $file");
                 @unlink($file);
             }
         }
@@ -1072,6 +1076,9 @@ Options -Indexes
         }
         fclose($fh);
     }
+
+    // Temporary files (timthumb_tmpimg_*) younger than this are not deleted by cleanCache(), as they may be in use.
+    const TEMP_FILE_MAX_AGE = 3600;
 
     // zc (zoom/crop) modes
     const ZC_RESIZE        = 0; // Resize to the exact size, ignoring the aspect ratio
@@ -1160,7 +1167,8 @@ Options -Indexes
 
     /**
      * Read the resize options from the query string (falling back to `default.*`).
-     * The width and height are limited to the original size and to `maxWidth` / `maxHeight`; 0 means "keep the aspect ratio".
+     * The width and height are limited to the original size and to `maxWidth` / `maxHeight`.
+     * A side given as 0 is worked out from the aspect ratio (and limited in the same way).
      */
     protected function readResizeOptions($origWidth, $origHeight)
     {
@@ -1172,10 +1180,30 @@ Options -Indexes
             $height = (int) self::config('default.h');
         }
 
+        // ensure size limits can not be abused
+        $maxWidth  = (int) self::config('maxWidth');
+        $maxHeight = (int) self::config('maxHeight');
+        $width     = (int) min($origWidth, $width, $maxWidth);
+        $height    = (int) min($origHeight, $height, $maxHeight);
+        // When only one side is given, work out the other from the aspect ratio here (as calculateLayout() does),
+        // so that it is also limited and the memory check sees the real size.
+        if ($width && !$height) {
+            $height = (int) max(1, floor($origHeight * ($width / $origWidth)));
+            if ($height > $maxHeight) {
+                $height = $maxHeight;
+                $width  = (int) max(1, floor($origWidth * ($height / $origHeight)));
+            }
+        } elseif ($height && !$width) {
+            $width = (int) max(1, floor($origWidth * ($height / $origHeight)));
+            if ($width > $maxWidth) {
+                $width  = $maxWidth;
+                $height = (int) max(1, floor($origHeight * ($width / $origWidth)));
+            }
+        }
+
         return [
-            // ensure size limits can not be abused
-            'width'             => (int) min($origWidth, $width, self::config('maxWidth')),
-            'height'            => (int) min($origHeight, $height, self::config('maxHeight')),
+            'width'             => $width,
+            'height'            => $height,
             'zoomCrop'          => (int) self::param('zc', self::config('default.zc')),
             'quality'           => max(0, min(100, abs((int) self::param('q', self::config('default.q'))))),
             'align'             => self::param('a', 'c'),
@@ -1223,6 +1251,11 @@ Options -Indexes
         // otherwise fill the background with the canvas colour.
         $useTransparentCanvas = $imgType === 'png' && !self::config('png.isTransparent') && $options['canvasTransparent'];
         $canvas = $this->createCanvas($layout['canvasWidth'], $layout['canvasHeight'], $options['canvasColor'], $useTransparentCanvas);
+        // On an opaque canvas, blend the transparent parts of the source onto the canvas colour
+        // (e.g. a PNG with `ct=0`). A transparent canvas copies the alpha channel as it is.
+        if (!$useTransparentCanvas) {
+            imagealphablending($canvas, true);
+        }
 
         imagecopyresampled(
             $canvas,
@@ -1321,7 +1354,9 @@ Options -Indexes
         $srcWidth  = $width;
         $srcHeight = $height;
 
-        if ($zoomCrop > 0) {
+        // The fit modes always use the whole source: its aspect ratio is kept already, and cropping it to the
+        // rounded destination size would cut most of it away when a side is rounded up to 1 pixel.
+        if ($zoomCrop > 0 && $zoomCrop != self::ZC_FIT_BORDERS && $zoomCrop != self::ZC_FIT_NO_BORDER) {
             // Crop the source to the aspect ratio of the destination
             $cmpX = $width / $newWidth;
             $cmpY = $height / $newHeight;
