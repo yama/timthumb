@@ -255,7 +255,7 @@ class timthumb
         if (!$this->init()) {
             return false;
         }
-        if (self::config('blockExternalLeechers') && !$this->isAllowedReferer()) {
+        if ($this->isHotlinkBlocked()) {
             $this->serveHotlinkImage();
             return true;
         }
@@ -278,13 +278,23 @@ class timthumb
     /**
      * Create the resized image (or wait for another request that is creating it) and send it.
      * Public for compatibility with code that calls `(new timthumb())->run()` directly (the request used to be
-     * read in the constructor); in that case the request is read here first. Errors are recorded, not sent.
-     * @return bool true when the image has been sent
+     * read in the constructor, which also sent the hotlink image); in that case the request is read here first.
+     * Errors are recorded, not sent.
+     * @return bool true when a response (the image or the hotlink image) has been sent
      */
     public function run()
     {
-        if (!$this->sourceResolved && !($this->init() && $this->resolveSource())) {
-            return false;
+        if (!$this->sourceResolved) {
+            if (!$this->init()) {
+                return false;
+            }
+            if ($this->isHotlinkBlocked()) {
+                $this->serveHotlinkImage();
+                return true;
+            }
+            if (!$this->resolveSource()) {
+                return false;
+            }
         }
 
         // Only one request generates a given cache file; concurrent requests for the same image wait here
@@ -2005,6 +2015,14 @@ Options -Indexes
         }
 
         return true;
+    }
+
+    /**
+     * Whether `blockExternalLeechers` is on and the request does not come from a page of this site.
+     */
+    protected function isHotlinkBlocked()
+    {
+        return self::config('blockExternalLeechers') && !$this->isAllowedReferer();
     }
 
     /**
