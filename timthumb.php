@@ -101,8 +101,9 @@ class timthumb
     protected $lastBenchTime   = 0;
     //Generally if timthumb.php is modifed (upgraded) then the salt changes and all cache files are recreated. This is a backup mechanism to force regen.
     protected $fileCacheVersion = 1;
-    //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
-    protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //";
+    // Cache files start with this PHP code so that they can not be executed even if the cache directory is web accessible.
+    // It is followed by the 3-letter image type and the PHP closing tag (see cacheFileHeader()), then the image data.
+    const CACHE_SECURITY_BLOCK = "<?php die('Execution denied!'); //";
 
     public static function mergedConfig() {
         $path = sprintf('%s/%s-config.php', __DIR__, basename(__FILE__, '.php'));
@@ -1161,42 +1162,49 @@ Options -Indexes
     }
 
     /**
+     * The header written in front of the image data in a cache file, e.g. "<?php die('Execution denied!'); //jpg ?>".
+     */
+    protected function cacheFileHeader($imgType)
+    {
+        return self::CACHE_SECURITY_BLOCK . $imgType . ' ?' . '>';
+    }
+
+    /**
      * Store the encoded image as the cache file, prefixed with the security header.
+     * The file is written under a temporary name and renamed, which replaces the cache file atomically,
+     * so concurrent requests never see a partly written file.
      */
     protected function writeCacheFile($imgType, $encodedPath)
     {
-        $this->debug(3, "Rewriting image with security header.");
-        $secureTempFilePath = tempnam($this->cacheDirectory, self::TEMP_FILE_PREFIX);
-        file_put_contents(
-            $secureTempFilePath,
-            $this->filePrependSecurityBlock . $imgType . ' ?' . '>'
-        ); //6 extra bytes, first 3 being image type
-        file_put_contents(
-            $secureTempFilePath,
-            file_get_contents($encodedPath, false, stream_context_create()),
-            FILE_APPEND
-        );
-        @unlink($encodedPath);
-        $this->debug(3, "Locking and replacing cache file.");
-        $lockFile = $this->cachefilePath . '.lock';
-        $fh = fopen($lockFile, 'w');
-        if (!$fh) {
-            @unlink($secureTempFilePath);
-            return $this->error("Could not open the lockfile for writing an image.");
+        $tempPath = tempnam($this->cacheDirectory, self::TEMP_FILE_PREFIX);
+        if (!$tempPath) {
+            return $this->error('Could not create a temporary file in the cache directory.');
         }
-        if (!flock($fh, LOCK_EX)) {
-            fclose($fh);
-            @unlink($lockFile);
-            @unlink($secureTempFilePath);
-            return $this->error("Could not get a lock for writing.");
-        }
-        @unlink($this->cachefilePath); //rename generally overwrites, but doing this in case of platform specific quirks. File might not exist yet.
-        rename($secureTempFilePath, $this->cachefilePath);
-        flock($fh, LOCK_UN);
-        fclose($fh);
+        $this->toDelete($tempPath);
 
-        @unlink($lockFile);
-        $this->debug(3, "Done image replace with security header.");
+        $in  = @fopen($encodedPath, 'rb');
+        $out = @fopen($tempPath, 'wb');
+        $ok  = $in && $out
+            && fwrite($out, $this->cacheFileHeader($imgType)) !== false
+            && stream_copy_to_stream($in, $out) !== false;
+        if ($in) {
+            fclose($in);
+        }
+        if ($out) {
+            $ok = fclose($out) && $ok;
+        }
+        if (!$ok) {
+            return $this->error('Could not write the cache file.');
+        }
+
+        if (!@rename($tempPath, $this->cachefilePath)) {
+            // Some platforms (Windows) can not replace a file that is open elsewhere; retry once after removing it.
+            @unlink($this->cachefilePath);
+            if (!@rename($tempPath, $this->cachefilePath)) {
+                return $this->error('Could not move the cache file into place.');
+            }
+        }
+        $this->debug(3, 'Wrote cache file ' . $this->cachefilePath);
         return true;
     }
 
@@ -1422,15 +1430,18 @@ Options -Indexes
             return false;
         }
 
-        $securityBlockSize = strlen($this->filePrependSecurityBlock);
-        fseek($fp, $securityBlockSize, SEEK_SET);
+        // The header has a fixed length: the security block, the 3-letter image type and the PHP closing tag.
+        $headerLength = strlen($this->cacheFileHeader('xxx'));
+        $header  = (string) fread($fp, $headerLength);
+        $imgType = substr($header, strlen(self::CACHE_SECURITY_BLOCK), 3);
+        if (strlen($header) !== $headerLength || $header !== $this->cacheFileHeader($imgType) || !in_array($imgType, self::IMAGE_TYPES, true)) {
+            fclose($fp);
+            $this->debug(1, 'Cache file has an invalid header: ' . $this->cachefilePath);
+            return false;
+        }
 
-        $this->sendImageHeaders(
-            fread($fp, 3),
-            filesize($this->cachefilePath) - ($securityBlockSize + 6)
-        );
+        $this->sendImageHeaders($imgType, filesize($this->cachefilePath) - $headerLength);
 
-        fseek($fp, 3, SEEK_CUR);
         while (!feof($fp)) {
             $bytesSent = @fread($fp, 8192);
             if ($bytesSent === false) {
