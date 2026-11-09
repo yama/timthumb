@@ -1052,6 +1052,27 @@ Options -Indexes
         fclose($fh);
     }
 
+    // zc (zoom/crop) modes
+    const ZC_RESIZE        = 0; // Resize to the exact size, ignoring the aspect ratio
+    const ZC_CROP          = 1; // Crop and resize to fill the size (default)
+    const ZC_FIT_BORDERS   = 2; // Resize to fit inside the size and fill the rest with the canvas colour
+    const ZC_FIT_NO_BORDER = 3; // Resize to fit inside the size; the canvas shrinks to the image
+
+    // f (filter) IDs => [GD filter constant, number of arguments]
+    const FILTERS = [
+        1  => ['IMG_FILTER_NEGATE', 0],
+        2  => ['IMG_FILTER_GRAYSCALE', 0],
+        3  => ['IMG_FILTER_BRIGHTNESS', 1],
+        4  => ['IMG_FILTER_CONTRAST', 1],
+        5  => ['IMG_FILTER_COLORIZE', 4],
+        6  => ['IMG_FILTER_EDGEDETECT', 0],
+        7  => ['IMG_FILTER_EMBOSS', 0],
+        8  => ['IMG_FILTER_GAUSSIAN_BLUR', 0],
+        9  => ['IMG_FILTER_SELECTIVE_BLUR', 0],
+        10 => ['IMG_FILTER_MEAN_REMOVAL', 0],
+        11 => ['IMG_FILTER_SMOOTH', 1],
+    ];
+
     /**
      * Resize the image, store it in the cache file and return it.
      * The caller must hold the lock of the cache file.
@@ -1060,14 +1081,12 @@ Options -Indexes
      */
     protected function processImageAndWriteToCache($localImage, $sData = null)
     {
-        $sData      = $sData ?: @getimagesize($localImage);
+        $sData = $sData ?: @getimagesize($localImage);
         if (!$sData) {
             return $this->error("The image being resized is not a valid gif, jpg or png.");
         }
-        $origWidth  = $sData[0];
-        $origHeight = $sData[1];
-        $origType   = $sData[2];
-        $mimeType   = $sData['mime'] ?? '';
+        [$origWidth, $origHeight, $origType] = $sData;
+        $mimeType = $sData['mime'] ?? '';
 
         $this->debug(3, "Mime type of image is $mimeType");
         $imgType = $this->imageTypeFromMime($mimeType);
@@ -1075,36 +1094,14 @@ Options -Indexes
             return $this->error("The image being resized is not a valid gif, jpg or png.");
         }
 
-        // get standard input properties
-        $new_width    = abs((int) self::param('w', 0));
-        $new_height   = abs((int) self::param('h', 0));
-        $zoom_crop    = (int) self::param('zc', self::config('default.zc'));
-        $quality      = max(0, min(100, abs((int) self::param('q', self::config('default.q')))));
-        $align        = self::param('a', 'c');
-        $filters      = self::param('f', self::config('default.f'));
-        $sharpen      = (bool) self::param('s', self::config('default.s'));
-        $canvas_color = ltrim(
-            self::param('cc', self::config('default.cc')),
-            '#'
-        );
-        $canvas_trans = (bool) self::param('ct', '1');
-
-        // set default width and height if neither are set already
-        if ($new_width == 0 && $new_height == 0) {
-            $new_width = (int) self::config('default.w');
-            $new_height = (int) self::config('default.h');
-        }
-
-        // ensure size limits can not be abused
-        $new_width  = (int) min($origWidth, $new_width, self::config('maxWidth'));
-        $new_height = (int) min($origHeight, $new_height, self::config('maxHeight'));
+        $options = $this->readResizeOptions($origWidth, $origHeight);
 
         // set memory limit to be able to have enough space to resize larger images
         $this->setMemoryLimit();
 
         // Refuse images that would not fit in memory once decoded (e.g. a small file with huge dimensions),
         // instead of dying with a fatal "Allowed memory size exhausted" error.
-        if (!$this->hasEnoughMemoryFor($origWidth, $origHeight, $new_width, $new_height)) {
+        if (!$this->hasEnoughMemoryFor($origWidth, $origHeight, $options['width'], $options['height'])) {
             return $this->error('The image is too large to process (not enough memory).');
         }
 
@@ -1115,215 +1112,16 @@ Options -Indexes
             return $this->error('The server is busy processing other images. Please try again.');
         }
 
-        // open the existing image
         $image = $this->openImage($imgType, $localImage);
         if ($image === false) {
             $this->releaseLock($slot);
             return $this->error('Unable to open image.');
         }
 
-        // Get original width and height
-        $width = imagesx($image);
-        $height = imagesy($image);
-        $origin_x = 0;
-        $origin_y = 0;
-
-        // generate new w/h if not provided
-        if ($new_width && !$new_height) {
-            $new_height = (int) max(1, floor($height * ($new_width / $width)));
-        } elseif ($new_height && !$new_width) {
-            $new_width = (int) max(1, floor($width * ($new_height / $height)));
-        }
-
-        // scale down (canvas is resized to fit the image)
-        if ($zoom_crop == 3) {
-
-            $final_height = $height * ($new_width / $width);
-
-            if ($final_height > $new_height) {
-                $new_width = (int) max(1, round($width * ($new_height / $height)));
-            } else {
-                $new_height = (int) max(1, round($final_height));
-            }
-        }
-
-        // create a new true color image
-        $canvas = imagecreatetruecolor($new_width, $new_height);
-        imagealphablending($canvas, false);
-
-        if (strlen($canvas_color) == 3) { //if is 3-char notation, edit string into 6-char notation
-            $canvas_color = sprintf(
-                "%s%s%s",
-                str_repeat(substr($canvas_color, 0, 1), 2),
-                str_repeat(substr($canvas_color, 1, 1), 2),
-                str_repeat(substr($canvas_color, 2, 1), 2)
-            );
-        } elseif (strlen($canvas_color) != 6) {
-            $canvas_color = self::config('default.cc'); // on error return default canvas color
-        }
-
-        // Create a new transparent color for image
-        // If is a png and PNG_IS_TRANSPARENT is false then remove the alpha transparency
-        // (and if is set a canvas color show it in the background)
-        $useTransparentCanvas = $imgType === 'png' && !self::config('png.isTransparent') && $canvas_trans;
-        $color = imagecolorallocatealpha(
-            $canvas,
-            hexdec(substr($canvas_color, 0, 2)),
-            hexdec(substr($canvas_color, 2, 2)),
-            hexdec(substr($canvas_color, 4, 2)),
-            $useTransparentCanvas ? 127 : 0
-        );
-
-        // Completely fill the background of the new image with allocated color.
-        imagefill($canvas, 0, 0, $color);
-
-        // scale down and add borders
-        if ($zoom_crop == 2) {
-
-            $final_height = $height * ($new_width / $width);
-
-            if ($final_height > $new_height) {
-                $canvas_width = $new_width;
-                $new_width = (int) max(1, round($width * ($new_height / $height)));
-                $origin_x = (int) round(($canvas_width - $new_width) / 2);
-            } else {
-                $canvas_height = $new_height;
-                $new_height = (int) max(1, round($final_height));
-                $origin_y = (int) round(($canvas_height - $new_height) / 2);
-            }
-        }
-
-        // Restore transparency blending
-        imagesavealpha($canvas, true);
-
-        if ($zoom_crop > 0) {
-
-            $src_x = $src_y = 0;
-            $src_w = $width;
-            $src_h = $height;
-
-            $cmp_x = $width / $new_width;
-            $cmp_y = $height / $new_height;
-
-            // calculate x or y coordinate and width or height of source
-            if ($cmp_x > $cmp_y) {
-                $src_w = (int) round($width / $cmp_x * $cmp_y);
-                $src_x = (int) round(($width - ($width / $cmp_x * $cmp_y)) / 2);
-            } elseif ($cmp_y > $cmp_x) {
-                $src_h = (int) round($height / $cmp_y * $cmp_x);
-                $src_y = (int) round(($height - ($height / $cmp_y * $cmp_x)) / 2);
-            }
-
-            // positional cropping!
-            if ($align) {
-                if (strpos($align, 't') !== false) {
-                    $src_y = 0;
-                }
-                if (strpos($align, 'b') !== false) {
-                    $src_y = $height - $src_h;
-                }
-                if (strpos($align, 'l') !== false) {
-                    $src_x = 0;
-                }
-                if (strpos($align, 'r') !== false) {
-                    $src_x = $width - $src_w;
-                }
-            }
-            imagecopyresampled(
-                $canvas,
-                $image,
-                $origin_x,
-                $origin_y,
-                $src_x,
-                $src_y,
-                $new_width,
-                $new_height,
-                $src_w,
-                $src_h
-            );
-        } else {
-            // copy and resize part of an image with resampling
-            imagecopyresampled(
-                $canvas,
-                $image,
-                0,
-                0,
-                0,
-                0,
-                $new_width,
-                $new_height,
-                $width,
-                $height
-            );
-        }
-
-        if ($filters && function_exists('imagefilter') && defined('IMG_FILTER_NEGATE')) {
-            $imageFilters = [
-                1 => [IMG_FILTER_NEGATE, 0],
-                2 => [IMG_FILTER_GRAYSCALE, 0],
-                3 => [IMG_FILTER_BRIGHTNESS, 1],
-                4 => [IMG_FILTER_CONTRAST, 1],
-                5 => [IMG_FILTER_COLORIZE, 4],
-                6 => [IMG_FILTER_EDGEDETECT, 0],
-                7 => [IMG_FILTER_EMBOSS, 0],
-                8 => [IMG_FILTER_GAUSSIAN_BLUR, 0],
-                9 => [IMG_FILTER_SELECTIVE_BLUR, 0],
-                10 => [IMG_FILTER_MEAN_REMOVAL, 0],
-                11 => [IMG_FILTER_SMOOTH, 1],
-            ];
-            // apply filters to image
-            $filterList = explode('|', $filters);
-            foreach ($filterList as $fl) {
-                $settings = explode(',', $fl);
-                // Look up by the raw string so malformed IDs such as "3junk" are ignored, not cast to 3.
-                $filterId = $settings[0];
-                if (!isset($imageFilters[$filterId])) {
-                    continue;
-                }
-                [$filter, $argCount] = $imageFilters[$filterId];
-                // imagefilter() rejects extra arguments since PHP 8, so pass exactly the required number.
-                // The smooth filter takes a float weight (e.g. f=11,0.5); the others take ints.
-                $args = array_map(
-                    $filter === IMG_FILTER_SMOOTH ? 'floatval' : 'intval',
-                    array_pad(array_slice($settings, 1, $argCount), $argCount, 0)
-                );
-                imagefilter($canvas, $filter, ...$args);
-            }
-        }
-
-        // sharpen image
-        if ($sharpen && function_exists('imageconvolution')) {
-
-            $sharpenMatrix = [
-                [-1, -1, -1],
-                [-1, 16, -1],
-                [-1, -1, -1],
-            ];
-
-            $divisor = 8;
-            $offset = 0;
-
-            imageconvolution($canvas, $sharpenMatrix, $divisor, $offset);
-        }
-        //Straight from Wordpress core code. Reduces filesize by up to 70% for PNG's
-        // Skipped when the canvas uses alpha transparency: imagetruecolortopalette() drops the alpha channel,
-        // which would turn the transparent background opaque.
-        if (!$useTransparentCanvas && (IMAGETYPE_PNG == $origType || IMAGETYPE_GIF == $origType) && function_exists('imageistruecolor') && !imageistruecolor($image) && imagecolortransparent($image) >= 0) {
-            imagetruecolortopalette($canvas, false, imagecolorstotal($image));
-        }
-
         // Encode into memory: the result is written to the cache once and served from memory.
-        ob_start();
-        if ($imgType === 'jpg') {
-            imagejpeg($canvas, null, $quality);
-        } elseif ($imgType === 'png') {
-            imagepng($canvas, null, (int) floor($quality * 0.09));
-        } else {
-            imagegif($canvas);
-        }
-        $data = ob_get_clean();
-        // Free the decoded images and the slot before the (slower) file operations.
-        $image = $canvas = null;
+        $data = $this->renderImage($image, $imgType, $origType, $options);
+        // Free the decoded image and the slot before the (slower) file operations.
+        $image = null;
         $this->releaseLock($slot);
         if ($data === false || $data === '') {
             return $this->error('Could not encode the image.');
@@ -1333,6 +1131,260 @@ Options -Indexes
             $data = $this->optimizePng($data);
         }
 
+        if (!$this->writeCacheFile($imgType, $data)) {
+            return false;
+        }
+        return ['type' => $imgType, 'data' => $data];
+    }
+
+    /**
+     * Read the resize options from the query string (falling back to `default.*`).
+     * The width and height are limited to the original size and to `maxWidth` / `maxHeight`; 0 means "keep the aspect ratio".
+     */
+    protected function readResizeOptions($origWidth, $origHeight)
+    {
+        $width  = abs((int) self::param('w', 0));
+        $height = abs((int) self::param('h', 0));
+        // set default width and height if neither are set already
+        if ($width == 0 && $height == 0) {
+            $width  = (int) self::config('default.w');
+            $height = (int) self::config('default.h');
+        }
+
+        return [
+            // ensure size limits can not be abused
+            'width'             => (int) min($origWidth, $width, self::config('maxWidth')),
+            'height'            => (int) min($origHeight, $height, self::config('maxHeight')),
+            'zoomCrop'          => (int) self::param('zc', self::config('default.zc')),
+            'quality'           => max(0, min(100, abs((int) self::param('q', self::config('default.q'))))),
+            'align'             => self::param('a', 'c'),
+            'filters'           => self::param('f', self::config('default.f')),
+            'sharpen'           => (bool) self::param('s', self::config('default.s')),
+            'canvasColor'       => $this->normalizeHexColor(self::param('cc', self::config('default.cc'))),
+            'canvasTransparent' => (bool) self::param('ct', '1'),
+        ];
+    }
+
+    /**
+     * '#abc' / 'abc' / 'aabbcc' => 'aabbcc'. Anything else falls back to `default.cc`.
+     */
+    protected function normalizeHexColor($color)
+    {
+        $color = ltrim($color, '#');
+        if (strlen($color) == 3) {
+            return $color[0] . $color[0] . $color[1] . $color[1] . $color[2] . $color[2];
+        }
+        if (strlen($color) != 6) {
+            return self::config('default.cc');
+        }
+        return $color;
+    }
+
+    /**
+     * Draw the resized image (canvas, crop, filters, sharpen) and encode it.
+     * @return string|false the encoded image
+     */
+    protected function renderImage($image, $imgType, $origType, array $options)
+    {
+        $layout = $this->calculateLayout(
+            imagesx($image),
+            imagesy($image),
+            $options['width'],
+            $options['height'],
+            $options['zoomCrop'],
+            $options['align']
+        );
+
+        // If is a png and `png.isTransparent` is false then keep the alpha transparency,
+        // otherwise fill the background with the canvas colour.
+        $useTransparentCanvas = $imgType === 'png' && !self::config('png.isTransparent') && $options['canvasTransparent'];
+        $canvas = $this->createCanvas($layout['canvasWidth'], $layout['canvasHeight'], $options['canvasColor'], $useTransparentCanvas);
+
+        imagecopyresampled(
+            $canvas,
+            $image,
+            $layout['dstX'],
+            $layout['dstY'],
+            $layout['srcX'],
+            $layout['srcY'],
+            $layout['dstWidth'],
+            $layout['dstHeight'],
+            $layout['srcWidth'],
+            $layout['srcHeight']
+        );
+
+        $this->applyFilters($canvas, $options['filters']);
+        if ($options['sharpen']) {
+            $this->sharpen($canvas);
+        }
+
+        //Straight from Wordpress core code. Reduces filesize by up to 70% for PNG's
+        // Skipped when the canvas uses alpha transparency: imagetruecolortopalette() drops the alpha channel,
+        // which would turn the transparent background opaque.
+        if (!$useTransparentCanvas && (IMAGETYPE_PNG == $origType || IMAGETYPE_GIF == $origType) && !imageistruecolor($image) && imagecolortransparent($image) >= 0) {
+            imagetruecolortopalette($canvas, false, imagecolorstotal($image));
+        }
+
+        ob_start();
+        if ($imgType === 'jpg') {
+            imagejpeg($canvas, null, $options['quality']);
+        } elseif ($imgType === 'png') {
+            // q (0-100) is mapped to the zlib compression level (0-9)
+            imagepng($canvas, null, (int) floor($options['quality'] * 0.09));
+        } else {
+            imagegif($canvas);
+        }
+        return ob_get_clean();
+    }
+
+    /**
+     * Work out the canvas size and which part of the source goes where on it.
+     * @param int $width / $height       size of the source image
+     * @param int $newWidth / $newHeight requested size; one of them may be 0 to keep the aspect ratio
+     * @return array canvasWidth, canvasHeight, dstX, dstY, dstWidth, dstHeight, srcX, srcY, srcWidth, srcHeight
+     */
+    protected function calculateLayout($width, $height, $newWidth, $newHeight, $zoomCrop, $align)
+    {
+        // generate new w/h if not provided
+        if ($newWidth && !$newHeight) {
+            $newHeight = (int) max(1, floor($height * ($newWidth / $width)));
+        } elseif ($newHeight && !$newWidth) {
+            $newWidth = (int) max(1, floor($width * ($newHeight / $height)));
+        }
+
+        // Height of the image when it is scaled to the requested width
+        $scaledHeight = $height * ($newWidth / $width);
+        $dstX = $dstY = 0;
+
+        if ($zoomCrop == self::ZC_FIT_NO_BORDER) {
+            // The canvas is shrunk to the scaled image
+            if ($scaledHeight > $newHeight) {
+                $newWidth = (int) max(1, round($width * ($newHeight / $height)));
+            } else {
+                $newHeight = (int) max(1, round($scaledHeight));
+            }
+        }
+        $canvasWidth  = $newWidth;
+        $canvasHeight = $newHeight;
+
+        if ($zoomCrop == self::ZC_FIT_BORDERS) {
+            // The canvas keeps the requested size and the scaled image is centred on it
+            if ($scaledHeight > $newHeight) {
+                $newWidth = (int) max(1, round($width * ($newHeight / $height)));
+                $dstX     = (int) round(($canvasWidth - $newWidth) / 2);
+            } else {
+                $newHeight = (int) max(1, round($scaledHeight));
+                $dstY      = (int) round(($canvasHeight - $newHeight) / 2);
+            }
+        }
+
+        $srcX = $srcY = 0;
+        $srcWidth  = $width;
+        $srcHeight = $height;
+
+        if ($zoomCrop > 0) {
+            // Crop the source to the aspect ratio of the destination
+            $cmpX = $width / $newWidth;
+            $cmpY = $height / $newHeight;
+            if ($cmpX > $cmpY) {
+                $srcWidth = (int) round($width / $cmpX * $cmpY);
+                $srcX     = (int) round(($width - ($width / $cmpX * $cmpY)) / 2);
+            } elseif ($cmpY > $cmpX) {
+                $srcHeight = (int) round($height / $cmpY * $cmpX);
+                $srcY      = (int) round(($height - ($height / $cmpY * $cmpX)) / 2);
+            }
+
+            // positional cropping (a=t, b, l, r or combinations such as tl)
+            if (strpos($align, 't') !== false) {
+                $srcY = 0;
+            }
+            if (strpos($align, 'b') !== false) {
+                $srcY = $height - $srcHeight;
+            }
+            if (strpos($align, 'l') !== false) {
+                $srcX = 0;
+            }
+            if (strpos($align, 'r') !== false) {
+                $srcX = $width - $srcWidth;
+            }
+        }
+
+        return [
+            'canvasWidth'  => $canvasWidth,
+            'canvasHeight' => $canvasHeight,
+            'dstX'         => $dstX,
+            'dstY'         => $dstY,
+            'dstWidth'     => $newWidth,
+            'dstHeight'    => $newHeight,
+            'srcX'         => $srcX,
+            'srcY'         => $srcY,
+            'srcWidth'     => $srcWidth,
+            'srcHeight'    => $srcHeight,
+        ];
+    }
+
+    /**
+     * Create a truecolor canvas filled with the colour (fully transparent when $transparent is true).
+     */
+    protected function createCanvas($width, $height, $hexColor, $transparent)
+    {
+        $canvas = imagecreatetruecolor($width, $height);
+        imagealphablending($canvas, false);
+        $color = imagecolorallocatealpha(
+            $canvas,
+            hexdec(substr($hexColor, 0, 2)),
+            hexdec(substr($hexColor, 2, 2)),
+            hexdec(substr($hexColor, 4, 2)),
+            $transparent ? 127 : 0
+        );
+        imagefill($canvas, 0, 0, $color);
+        imagesavealpha($canvas, true);
+        return $canvas;
+    }
+
+    /**
+     * Apply the `f` filters, e.g. "2|3,20" = grayscale, then brightness 20.
+     */
+    protected function applyFilters($canvas, $filters)
+    {
+        if (!$filters || !function_exists('imagefilter')) {
+            return;
+        }
+        foreach (explode('|', $filters) as $fl) {
+            $settings = explode(',', $fl);
+            // Look up by the raw string so malformed IDs such as "3junk" are ignored, not cast to 3.
+            $filterId = $settings[0];
+            if (!isset(self::FILTERS[$filterId])) {
+                continue;
+            }
+            [$filterName, $argCount] = self::FILTERS[$filterId];
+            $filter = constant($filterName);
+            // imagefilter() rejects extra arguments since PHP 8, so pass exactly the required number.
+            // The smooth filter takes a float weight (e.g. f=11,0.5); the others take ints.
+            $args = array_map(
+                $filter === IMG_FILTER_SMOOTH ? 'floatval' : 'intval',
+                array_pad(array_slice($settings, 1, $argCount), $argCount, 0)
+            );
+            imagefilter($canvas, $filter, ...$args);
+        }
+    }
+
+    protected function sharpen($canvas)
+    {
+        $matrix = [
+            [-1, -1, -1],
+            [-1, 16, -1],
+            [-1, -1, -1],
+        ];
+        imageconvolution($canvas, $matrix, 8, 0);
+    }
+
+    /**
+     * Store the encoded image as the cache file. rename() replaces the old file atomically (also on Windows),
+     * so readers always find a complete file.
+     */
+    protected function writeCacheFile($imgType, $data)
+    {
         $this->debug(3, "Writing the cache file.");
         $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
         // The file starts with a PHP guard followed by the 3 letter image type and the PHP closing tag (6 bytes),
@@ -1345,12 +1397,11 @@ Options -Indexes
             }
             return $this->error('Could not write the cache file.');
         }
-        // rename() replaces the old file atomically (also on Windows), so readers always find a complete file.
         if (!rename($tempFilePath, $this->cachefilePath)) {
             @unlink($tempFilePath);
             return $this->error('Could not write the cache file.');
         }
-        return ['type' => $imgType, 'data' => $data];
+        return true;
     }
 
     /**
