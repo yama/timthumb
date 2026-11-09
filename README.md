@@ -191,6 +191,9 @@ The query string parameters are used to specify processing for each image, but t
 - `curlTimeout`
     - Default: 20
     - Comment: Timeout in seconds for fetching external images. External images require the PHP curl extension.
+- `curlUserAgent`
+    - Default: a desktop Chrome User-Agent string
+    - Comment: User-Agent sent when fetching external images. A browser-like value is used because some image hosts reject unknown clients.
 - `allowedSites`
     - Default: []
     - Comment: Allowed external websites. Hosts must match exactly; prefix an entry with a dot to also allow its subdomains (e.g. '.example.com' allows example.com and img.example.com). Only http/https on the default ports (80/443) are fetched unless the entry names a port (e.g. 'localhost:9000' for a development image server; such a host usually also needs `allowPrivateIPs`), and redirects are only followed to allowed sites. Avoid allowing domains where anyone can publish content (e.g. '.github.io', '.s3.amazonaws.com'). Example: ['img.youtube.com', '.example.com']

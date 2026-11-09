@@ -33,6 +33,8 @@ class timthumb
         'memoryLimit'   => '256M', // Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
         'maxFileSize'   => 15728640, // 15 Megs is 15728640. This is the max internal or external file size that we'll process.
         'curlTimeout'   => 20, // Timeout in seconds for fetching external images. External images require the PHP curl extension.
+        // User-Agent sent when fetching external images. A browser-like value is used because some image hosts reject unknown clients.
+        'curlUserAgent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
         // Allowed external websites. Hosts must match exactly; prefix with a dot to also allow subdomains.
         // Example: ['img.youtube.com', '.example.com'] allows img.youtube.com, example.com and *.example.com
         // Only ports 80/443 are allowed unless the entry names a port, e.g. 'localhost:9000' (development).
@@ -1670,9 +1672,8 @@ Options -Indexes
         }
 
         $curlHandle = curl_init($url);
-        $ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36";
         curl_setopt($curlHandle, CURLOPT_TIMEOUT, self::config('curlTimeout'));
-        curl_setopt($curlHandle, CURLOPT_USERAGENT, $ua);
+        curl_setopt($curlHandle, CURLOPT_USERAGENT, (string) self::config('curlUserAgent'));
         curl_setopt($curlHandle, CURLOPT_HEADER, false);
         curl_setopt($curlHandle, CURLOPT_FOLLOWLOCATION, false);
         if (defined('CURLOPT_PROTOCOLS')) {
