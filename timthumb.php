@@ -1514,17 +1514,34 @@ Options -Indexes
 
         $docRoot = defined('LOCAL_FILE_BASE_DIRECTORY') ? constant('LOCAL_FILE_BASE_DIRECTORY') : self::server('DOCUMENT_ROOT');
 
-        $phpSelf = self::server('PHP_SELF');
+        // The script's URL path. PHP_SELF also contains PATH_INFO (/timthumb.php/anything), which the client
+        // controls; with it the cut below would be longer and the root wider than the real document root.
+        $scriptName = self::server('SCRIPT_NAME');
+        if ($scriptName === '') {
+            $phpSelf    = self::server('PHP_SELF');
+            $pathInfo   = self::server('PATH_INFO');
+            $scriptName = ($pathInfo !== '' && substr($phpSelf, -strlen($pathInfo)) === $pathInfo)
+                ? substr($phpSelf, 0, -strlen($pathInfo))
+                : $phpSelf;
+        }
         $scriptPaths = [
             'SCRIPT_FILENAME' => self::server('SCRIPT_FILENAME'),
             'PATH_TRANSLATED' => str_replace('\\\\', '\\', self::server('PATH_TRANSLATED')),
         ];
         foreach ($scriptPaths as $source => $scriptPath) {
-            if ($docRoot || $scriptPath === '' || $phpSelf === '') {
+            if ($docRoot || $scriptPath === '' || $scriptName === '') {
                 continue;
             }
-            $docRoot = str_replace('\\', '/', substr($scriptPath, 0, -strlen($phpSelf)));
-            $this->debug(3, "DOCUMENT_ROOT is not set. Generated docRoot using $source and PHP_SELF as: $docRoot");
+            $scriptPath = str_replace('\\', '/', $scriptPath);
+            // Only derive the root when the file path really ends with the URL path (case-insensitive for Windows).
+            if (strlen($scriptPath) <= strlen($scriptName)
+                || substr_compare($scriptPath, $scriptName, -strlen($scriptName), strlen($scriptName), true) !== 0
+            ) {
+                $this->debug(1, "Could not derive the document root from $source ($scriptPath) and the script name ($scriptName).");
+                continue;
+            }
+            $docRoot = substr($scriptPath, 0, -strlen($scriptName));
+            $this->debug(3, "DOCUMENT_ROOT is not set. Generated docRoot using $source and the script name as: $docRoot");
         }
 
         if ($docRoot !== '/') {
