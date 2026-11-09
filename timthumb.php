@@ -90,6 +90,7 @@ class timthumb
     protected $src             = '';
     protected $is404           = false;
     protected $lastURLError    = false;
+    protected $docRoot         = null; // cached result of calcDocRoot()
     protected $localImagePath  = '';
     protected $localImageMTime = 0;
     protected $myHost          = '';
@@ -1276,37 +1277,37 @@ Options -Indexes
         rename($pngCrushFilePath, $tempFilePath);
     }
 
+    /**
+     * The directory local images are served from: LOCAL_FILE_BASE_DIRECTORY, DOCUMENT_ROOT, or (when the server
+     * does not set DOCUMENT_ROOT, e.g. some IIS setups) the script path with the script's URL path removed.
+     * @return string without a trailing slash (except for '/'), or '' when it can not be determined
+     */
     protected function calcDocRoot()
     {
+        if ($this->docRoot !== null) {
+            return $this->docRoot;
+        }
+
         $docRoot = defined('LOCAL_FILE_BASE_DIRECTORY') ? constant('LOCAL_FILE_BASE_DIRECTORY') : self::server('DOCUMENT_ROOT');
 
-        if (!$docRoot) {
-            $this->debug(3, "DOCUMENT_ROOT is not set. This is probably windows. Starting search 1.");
-            if (self::server('SCRIPT_FILENAME')) {
-                $docRoot = str_replace('\\', '/', substr(self::server('SCRIPT_FILENAME'), 0, 0 - strlen(self::server('PHP_SELF'))));
-                $this->debug(3, "Generated docRoot using SCRIPT_FILENAME and PHP_SELF as: $docRoot");
+        $phpSelf = self::server('PHP_SELF');
+        $scriptPaths = [
+            'SCRIPT_FILENAME' => self::server('SCRIPT_FILENAME'),
+            'PATH_TRANSLATED' => str_replace('\\\\', '\\', self::server('PATH_TRANSLATED')),
+        ];
+        foreach ($scriptPaths as $source => $scriptPath) {
+            if ($docRoot || $scriptPath === '' || $phpSelf === '') {
+                continue;
             }
+            $docRoot = str_replace('\\', '/', substr($scriptPath, 0, -strlen($phpSelf)));
+            $this->debug(3, "DOCUMENT_ROOT is not set. Generated docRoot using $source and PHP_SELF as: $docRoot");
         }
-        if (!$docRoot) {
-            $this->debug(3, "DOCUMENT_ROOT still is not set. Starting search 2.");
-            if (self::server('PATH_TRANSLATED')) {
-                $docRoot = str_replace(
-                    '\\',
-                    '/',
-                    substr(
-                        str_replace('\\\\', '\\', self::server('PATH_TRANSLATED')),
-                        0,
-                        0 - strlen(self::server('PHP_SELF'))
-                    )
-                );
-                $this->debug(3, "Generated docRoot using PATH_TRANSLATED and PHP_SELF as: $docRoot");
-            }
-        }
-        if ($docRoot && self::server('DOCUMENT_ROOT') !== '/') {
-            $docRoot = rtrim($docRoot, '/');
+
+        if ($docRoot !== '/') {
+            $docRoot = rtrim((string) $docRoot, '/');
         }
         $this->debug(3, "Doc root is: " . $docRoot);
-        return $docRoot;
+        return $this->docRoot = $docRoot;
     }
 
     protected function getLocalImagePath($src)
