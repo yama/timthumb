@@ -1249,16 +1249,31 @@ Options -Indexes
             imagetruecolortopalette($canvas, false, imagecolorstotal($image));
         }
 
+        // The image is encoded into an output buffer. A PHP warning or notice raised by GD meanwhile would be
+        // printed into that buffer (with display_errors on) and end up in the cached image, and libgd may report
+        // a failure only as a warning while the function still returns true. So any error during encoding is
+        // kept out of the output and treated as a failure.
+        $failed = false;
+        set_error_handler(function ($errno, $errstr) use (&$failed) {
+            $failed = true;
+            $this->debug(1, "Error while encoding the image: $errstr");
+            return true;
+        });
         ob_start();
-        if ($imgType === 'jpg') {
-            imagejpeg($canvas, null, $options['quality']);
-        } elseif ($imgType === 'png') {
-            // q (0-100) is mapped to the zlib compression level (0-9)
-            imagepng($canvas, null, (int) floor($options['quality'] * 0.09));
-        } else {
-            imagegif($canvas);
+        try {
+            if ($imgType === 'jpg') {
+                $ok = imagejpeg($canvas, null, $options['quality']);
+            } elseif ($imgType === 'png') {
+                // q (0-100) is mapped to the zlib compression level (0-9)
+                $ok = imagepng($canvas, null, (int) floor($options['quality'] * 0.09));
+            } else {
+                $ok = imagegif($canvas);
+            }
+        } finally {
+            $data = ob_get_clean();
+            restore_error_handler();
         }
-        return ob_get_clean();
+        return ($ok && !$failed) ? $data : false;
     }
 
     /**
