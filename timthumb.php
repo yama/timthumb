@@ -84,11 +84,9 @@ class timthumb
 
     protected $src             = '';
     protected $is404           = false;
-    protected $docRoot         = '';
     protected $lastURLError    = false;
     protected $localImagePath  = '';
     protected $localImageMTime = 0;
-    protected $url             = false;
     protected $myHost          = '';
     protected $isExternalURL   = false;
     protected $cachefilePath   = '';
@@ -100,8 +98,6 @@ class timthumb
     protected $fileCacheVersion = 1;
     //Designed to have three letter mime type, space, question mark and greater than symbol appended. 6 bytes total.
     protected $filePrependSecurityBlock = "<?php die('Execution denied!'); //";
-    protected $curlDataWritten = 0;
-    protected $curlFH = null;
 
     public static function mergedConfig() {
         $path = sprintf('%s/%s-config.php', __DIR__, basename(__FILE__, '.php'));
@@ -182,7 +178,7 @@ class timthumb
 
         $this->localImagePath = $this->getLocalImagePath($this->src);
         if (!$this->localImagePath) {
-            $this->debug(1, 'Could not find the local image: ' . $this->localImagePath);
+            $this->debug(1, 'Could not find the local image: ' . $this->src);
             $this->error('Could not find the internal image you specified.');
             $this->set404();
             return;
@@ -239,15 +235,6 @@ class timthumb
         if (!$this->isExternalURL) {
             $this->debug(3, 'Got request for internal image. Starting serveInternalImage()');
             return $this->serveInternalImage();
-        }
-
-        if (!self::config('allowedSites') || !self::config('allowExternal', true)) {
-            $this->debug(
-                1,
-                'Got a request for an external image but there are no allowed sites specified in the `allowedSites` option, so returning an error message.'
-            );
-            $this->error('You are not allowed to fetch images from an external website.');
-            return false;
         }
 
         $this->debug(3, 'Got request for external image. Starting serveExternalImage.');
@@ -836,7 +823,8 @@ Options -Indexes
         $mimeType   = $sData['mime'] ?? '';
 
         $this->debug(3, "Mime type of image is $mimeType");
-        if (!preg_match('@^image/(?:gif|jpg|jpeg|png)$@i', $mimeType)) {
+        $imgType = $this->imageTypeFromMime($mimeType);
+        if (!$imgType) {
             return $this->error("The image being resized is not a valid gif, jpg or png.");
         }
 
@@ -874,7 +862,7 @@ Options -Indexes
         }
 
         // open the existing image
-        $image = $this->openImage($mimeType, $localImage);
+        $image = $this->openImage($imgType, $localImage);
         if ($image === false) {
             return $this->error('Unable to open image.');
         }
@@ -922,7 +910,7 @@ Options -Indexes
         // Create a new transparent color for image
         // If is a png and PNG_IS_TRANSPARENT is false then remove the alpha transparency
         // (and if is set a canvas color show it in the background)
-        $useTransparentCanvas = $mimeType === 'image/png' && !self::config('png.isTransparent') && $canvas_trans;
+        $useTransparentCanvas = $imgType === 'png' && !self::config('png.isTransparent') && $canvas_trans;
         $color = imagecolorallocatealpha(
             $canvas,
             hexdec(substr($canvas_color, 0, 2)),
@@ -1070,22 +1058,17 @@ Options -Indexes
         }
 
         $tempFilePath = tempnam($this->cacheDirectory, 'timthumb_tmpimg_');
-        if (preg_match('@^image/(?:jpg|jpeg)$@i', $mimeType)) {
-            $imgType = 'jpg';
+        if ($imgType === 'jpg') {
             imagejpeg($canvas, $tempFilePath, $quality);
-        } elseif (preg_match('@^image/png$@i', $mimeType)) {
-            $imgType = 'png';
+        } elseif ($imgType === 'png') {
             imagepng($canvas, $tempFilePath, (int) floor($quality * 0.09));
             if (self::config('png.optipngEnabled')) {
                 $this->handleOptiPng($tempFilePath);
             } elseif (self::config('png.pngcrushEnabled')) {
                 $this->handlePngCrush($tempFilePath);
             }
-        } elseif (preg_match('@^image/gif$@i', $mimeType)) {
-            $imgType = 'gif';
-            imagegif($canvas, $tempFilePath);
         } else {
-            return $this->sanityFail("Could not match mime type after verifying it previously.");
+            imagegif($canvas, $tempFilePath);
         }
 
         $this->debug(3, "Rewriting image with security header.");
@@ -1236,7 +1219,7 @@ Options -Indexes
             //We don't support serving images outside the current dir if we don't have a doc root for security reasons.
             $file = preg_replace('@^.*?([^/\\\\]+)$@', '$1', $src); //strip off any path info and just leave the filename.
             if (is_file($file)) {
-                return $this->realpath($file);
+                return realpath($file);
             }
             return $this->error(
                 "Could not find your website document root and the file specified doesn't exist in timthumbs directory. We don't support serving files outside timthumb's directory without a document root for security reasons."
@@ -1285,11 +1268,6 @@ Options -Indexes
         return strpos($path, $directory) === 0;
     }
 
-    protected function realpath($path)
-    {
-        return realpath($path);
-    }
-
     protected function toDelete($tempFilePath)
     {
         $this->debug(3, "Scheduling file $tempFilePath to delete on destruct.");
@@ -1298,10 +1276,6 @@ Options -Indexes
 
     protected function serveExternalImage()
     {
-        if (!preg_match('@^https?://[a-zA-Z0-9\-.]+@i', $this->src)) {
-            $this->error("Invalid URL supplied.");
-            return false;
-        }
         $tempFilePath = tempnam($this->cacheDirectory, 'timthumb');
         $this->debug(3, "Fetching external image into temporary file $tempFilePath");
         $this->toDelete($tempFilePath);
@@ -1315,7 +1289,7 @@ Options -Indexes
         }
 
         $mimeType = $this->getMimeType($tempFilePath);
-        if (!preg_match("@^image/(?:jpg|jpeg|gif|png)$@i", $mimeType)) {
+        if (!$this->imageTypeFromMime($mimeType)) {
             $this->debug(3, "Remote file has invalid mime type: $mimeType");
             @unlink($this->cachefilePath);
             touch($this->cachefilePath);
@@ -1378,14 +1352,9 @@ Options -Indexes
         return true;
     }
 
-    protected function sendImageHeaders($mimeType, $dataSize)
+    protected function sendImageHeaders($imgType, $dataSize)
     {
-        if (!preg_match('@^image/@i', $mimeType)) {
-            $mimeType = 'image/' . $mimeType;
-        }
-        if (strtolower($mimeType) === 'image/jpg') {
-            $mimeType = 'image/jpeg';
-        }
+        $mimeType = array_search($imgType, self::IMAGE_TYPES, true) ?: 'application/octet-stream';
         $gmdate_expires = gmdate('D, d M Y H:i:s', self::now() + (int) self::config('browserCache.maxAge')) . ' GMT';
         // send content headers then display image
         header('Content-Type: ' . $mimeType);
@@ -1406,24 +1375,39 @@ Options -Indexes
         return true;
     }
 
-    protected function openImage($mimeType, $src)
+    /**
+     * The supported image types, keyed by the MIME type getimagesize() reports.
+     * The value is the 3-letter type stored in the cache file header.
+     */
+    const IMAGE_TYPES = [
+        'image/jpeg' => 'jpg',
+        'image/png'  => 'png',
+        'image/gif'  => 'gif',
+    ];
+
+    /**
+     * @return string|null 'jpg', 'png' or 'gif', or null for an unsupported type
+     */
+    protected function imageTypeFromMime($mimeType)
     {
-        if ($mimeType === 'image/jpeg') {
-            return imagecreatefromjpeg($src);
-        }
+        return self::IMAGE_TYPES[strtolower((string) $mimeType)] ?? null;
+    }
 
-        if ($mimeType === 'image/png') {
-            $image = imagecreatefrompng($src);
-            imagealphablending($image, true);
-            imagesavealpha($image, true);
-            return $image;
+    protected function openImage($imgType, $src)
+    {
+        switch ($imgType) {
+            case 'jpg':
+                return @imagecreatefromjpeg($src);
+            case 'png':
+                $image = @imagecreatefrompng($src);
+                if ($image) {
+                    imagealphablending($image, true);
+                    imagesavealpha($image, true);
+                }
+                return $image;
+            case 'gif':
+                return @imagecreatefromgif($src);
         }
-
-        if ($mimeType === 'image/gif') {
-            return imagecreatefromgif($src);
-        }
-
-        $this->error("Unrecognised mimeType");
         return false;
     }
 
@@ -1543,30 +1527,24 @@ Options -Indexes
     protected function fetchAndSaveImageFromUrl($url, $tempFilePath)
     {
         $this->lastURLError = false;
-        $url = str_replace(' ', '%20', $url);
-        if (extension_loaded('curl')) {
-            // Redirects are followed manually so that every hop is checked against `allowedSites`.
-            for ($redirects = 0; $redirects <= 5; $redirects++) {
-                $result = $this->curlFetch($url, $tempFilePath);
-                if ($result === false) {
-                    return false;
-                }
-                if ($result === true) {
-                    return true;
-                }
-                // $result is the redirect target
-                if (!$this->isAllowedSiteUrl($result)) {
-                    $this->lastURLError = ' Redirected to a site that is not in `allowedSites`.';
-                    return false;
-                }
-                $url = $result;
+        // curl is required for external images (checked in isExternalImageAllowed()).
+        // Redirects are followed manually so that every hop is checked against `allowedSites`.
+        for ($redirects = 0; $redirects <= 5; $redirects++) {
+            $result = $this->curlFetch($url, $tempFilePath);
+            if ($result === false) {
+                return false;
             }
-            $this->lastURLError = ' Too many redirects.';
-            return false;
+            if ($result === true) {
+                return true;
+            }
+            // $result is the redirect target
+            if (!$this->isAllowedSiteUrl($result)) {
+                $this->lastURLError = ' Redirected to a site that is not in `allowedSites`.';
+                return false;
+            }
+            $url = $result;
         }
-
-        // External images are rejected earlier in isExternalImageAllowed() when curl is missing.
-        $this->lastURLError = ' External images require the PHP curl extension.';
+        $this->lastURLError = ' Too many redirects.';
         return false;
     }
 
