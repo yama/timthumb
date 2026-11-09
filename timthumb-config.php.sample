@@ -11,6 +11,7 @@
 
 return [
     // 'memoryLimit'  => '256M',
+    // 'maxConcurrentProcessing' => 4, // images resized at the same time (0 = unlimited)
     // 'maxFileSize'  => 15728640,
     // 'maxWidth'     => 1024,
     // 'maxHeight'    => 768,

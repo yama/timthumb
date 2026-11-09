@@ -185,6 +185,12 @@ The query string parameters are used to specify processing for each image, but t
 - `memoryLimit`
     - Default: '256M'
     - Comment: Minimum PHP memory limit while resizing (only raised, never lowered). GD needs roughly width x height x 5 bytes, so a 24MP photo needs ~120MB
+- `maxConcurrentProcessing`
+    - Default: 4
+    - Comment: How many images may be resized at the same time on this server. Other requests wait (sleeping, without using memory) until a slot is free. This keeps a page with dozens of new thumbnails from making dozens of PHP workers use up to `memoryLimit` each. 0 = unlimited
+- `processingWaitTimeout`
+    - Default: 20
+    - Comment: Seconds a request may wait in total for other requests (the same image being generated, or a free processing slot). After that it returns an error image with status 503 (not cached, so the next page view tries again). If you use slow external image hosts, keep this at least as long as `curlTimeout`
 - `maxFileSize`
     - Default: 15728640
     - Comment: 15 Megs is 15728640. This is the max internal or external file size that we'll process.
@@ -282,3 +288,15 @@ The query string parameters are used to specify processing for each image, but t
 - `errorImage`
     - Default: ''
     - Comment: Image to serve if an error occurs instead of the generated error image
+
+## Part 8: Performance
+
+TimThumb is often used for pages with dozens of thumbnails, so each request should stay light.
+
+- **Cached thumbnails** are served with a few file system checks and one file read; repeat visits get `304 Not Modified` or use the browser cache (`browserCache.maxAge`). Old cache files are deleted at most once per `fileCache.timeBetweenCleans`, after the response has been sent.
+- **New thumbnails** are the expensive part. Only one request generates a given thumbnail (concurrent requests for the same image wait for it), and at most `maxConcurrentProcessing` images are resized at the same time.
+- **The cache key** contains the TimThumb version, the image parameters and the settings that change the output (`default`, `png`, `maxWidth`, `maxHeight`). Redeploying the same version keeps the cache; upgrading TimThumb or changing those settings recreates the thumbnails.
+
+### Keep the original images reasonably small
+
+GD always decodes the whole original image before resizing it, so the time and memory needed depend on the size of the original, not of the thumbnail: a 24 megapixel photo needs about 120MB of memory and noticeably more CPU time than a 2 megapixel one. If you upload photos straight from a camera, resize them to the largest size you actually display (e.g. 2000 pixels on the long side) before using them with TimThumb.
