@@ -128,6 +128,14 @@ class timthumb
     }
 
     /**
+     * Does nothing: the request is read by start() (or run()), not when the object is created.
+     * Kept so that subclasses written for the old constructor can still call parent::__construct().
+     */
+    public function __construct()
+    {
+    }
+
+    /**
      * Check the environment and read the requested `src`.
      * @return bool false when an error was recorded
      */
